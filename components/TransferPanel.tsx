@@ -11,6 +11,7 @@ import {
 import { enqueueOp, getCachedWarehouses, listPendingOps, syncPendingOps } from "@/lib/db-offline";
 import { STORE_ID } from "@/lib/tenant";
 import { useI18n } from "@/lib/i18n";
+import ConfirmDialog from "@/components/ConfirmDialog";
 
 const inputClass =
   "w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900 placeholder-gray-400 transition-colors focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20";
@@ -47,6 +48,7 @@ export default function TransferPanel({
     kind: "error" | "success";
     text: string;
   } | null>(null);
+  const [transferConfirmation, setTransferConfirmation] = useState<{ product: string; quantity: number; from: string; to: string } | null>(null);
 
   function applyWarehouses(rows: Warehouse[]) {
     setWarehouses(rows);
@@ -156,6 +158,16 @@ export default function TransferPanel({
       return;
     }
 
+    const productName = products.find((product) => product.id === Number(productId))?.name ?? "selected product";
+    const fromName = warehouses.find((warehouse) => warehouse.id === Number(fromWarehouse))?.name ?? "source warehouse";
+    const toName = warehouses.find((warehouse) => warehouse.id === Number(toWarehouse))?.name ?? "destination warehouse";
+    setTransferConfirmation({ product: productName, quantity: qty, from: fromName, to: toName });
+  }
+
+  async function confirmTransfer() {
+    if (!transferConfirmation) return;
+    const qty = parseInt(quantity, 10);
+    setTransferConfirmation(null);
     setSubmitting(true);
     setMessage(null);
     try {
@@ -397,6 +409,14 @@ export default function TransferPanel({
           </ul>
         )}
       </div>
+      <ConfirmDialog
+        open={transferConfirmation !== null}
+        title="Confirm stock transfer"
+        message={transferConfirmation ? `Move ${transferConfirmation.quantity} ${transferConfirmation.product} from ${transferConfirmation.from} to ${transferConfirmation.to}?` : ""}
+        confirmLabel="Confirm transfer"
+        onConfirm={confirmTransfer}
+        onCancel={() => setTransferConfirmation(null)}
+      />
     </section>
   );
 }

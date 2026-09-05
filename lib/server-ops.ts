@@ -27,6 +27,20 @@ export function formatAuditError(err: unknown): string {
   return "Request failed.";
 }
 
+async function assertTenantWritable(storeId: number): Promise<void> {
+  const { data, error } = await supabase
+    .from("tenants")
+    .select("status, subscription_expires_at")
+    .eq("id", storeId)
+    .maybeSingle();
+  if (error) throw error;
+  if (!data) return;
+  if (data.status !== "active") throw new Error("This tenant is suspended and currently read-only.");
+  if (data.subscription_expires_at && new Date(data.subscription_expires_at).getTime() <= Date.now()) {
+    throw new Error("This tenant trial or subscription has expired and is currently read-only.");
+  }
+}
+
 async function getMainWarehouse(storeId: number): Promise<WarehouseRow | null> {
   const { data } = await supabase
     .from("warehouses")
@@ -111,6 +125,7 @@ export async function serverRecordSale(
     userId?: string | null;
   }
 ): Promise<{ duplicate: boolean }> {
+  await assertTenantWritable(storeId);
   const { items } = input;
   if (!Array.isArray(items) || items.length === 0) {
     throw new Error("No items were provided.");
@@ -178,7 +193,7 @@ export async function serverRecordSale(
       await syncProductStock(storeId, item.product_id);
     }
 
-    const { data: inserted, error: insertError } = await supabase
+    const saleInsert = await supabase
       .from("sales")
       .insert({
         store_id: storeId,
@@ -187,11 +202,12 @@ export async function serverRecordSale(
         quantity: item.quantity,
         unit_price: unitPrice,
         unit_cost: Math.round(unitPrice * COST_RATIO * 100) / 100,
-        client_op_id: input.clientOpId ?? null,
+        client_op_id: saleId === null ? input.clientOpId ?? null : null,
       })
       .select("id")
       .single();
-    if (insertError) throw insertError;
+    if (saleInsert.error) throw saleInsert.error;
+    const inserted = saleInsert.data as { id: number } | null;
     saleId = inserted ? Number(inserted.id) : null;
 
     await logAudit(storeId, input.userId ?? null, {
@@ -231,6 +247,7 @@ export async function serverTransfer(
     userId?: string | null;
   }
 ): Promise<{ ok: true }> {
+  await assertTenantWritable(storeId);
   const { productId, fromWarehouseId, toWarehouseId, quantity } = input;
   if (fromWarehouseId === toWarehouseId) {
     throw new Error("Source and destination warehouses must be different.");
@@ -310,6 +327,7 @@ export async function serverCreateProduct(
   storeId: number,
   input: { name: string; price: number; stock: number; userId?: string | null }
 ): Promise<{ id: number }> {
+  await assertTenantWritable(storeId);
   const { data: created, error } = await supabase
     .from("products")
     .insert({ store_id: storeId, name: input.name, price: input.price, stock: input.stock })
@@ -343,6 +361,7 @@ export async function serverUpdateProduct(
     userId?: string | null;
   }
 ): Promise<{ ok: true }> {
+  await assertTenantWritable(storeId);
   const { data: product } = await supabase
     .from("products")
     .select("id, name, price, stock")
@@ -416,6 +435,7 @@ export async function serverDeleteProduct(
   storeId: number,
   input: { id: number; userId?: string | null }
 ): Promise<{ ok: true }> {
+  await assertTenantWritable(storeId);
   const { data: product } = await supabase
     .from("products")
     .select("id, name")

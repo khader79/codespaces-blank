@@ -13,13 +13,14 @@ import {
 import { STORE_ID } from "@/lib/tenant";
 import { aggregateMonthly } from "@/lib/analytics";
 import { useI18n } from "@/lib/i18n";
-import AppHeader from "@/components/AppHeader";
+import AppHeader from "@/components/ClientAppHeader";
 import SalesCharts from "@/components/SalesCharts";
 import AnalystPanel from "@/components/AnalystPanel";
 import PurchaseOrderPanel from "@/components/PurchaseOrderPanel";
 import CopilotDrawer from "@/components/CopilotDrawer";
 import AIAlerts from "@/components/AIAlerts";
 import TransferPanel from "@/components/TransferPanel";
+import ConfirmDialog from "@/components/ConfirmDialog";
 
 const LOW_STOCK_THRESHOLD = 5;
 
@@ -43,6 +44,7 @@ export default function Home() {
   const [saving, setSaving] = useState(false);
 
   const [copilotOpen, setCopilotOpen] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<Product | null>(null);
 
   useEffect(() => {
     Promise.all([getProducts(storeId), getSales(storeId)])
@@ -111,6 +113,13 @@ export default function Home() {
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to delete product.");
     }
+  }
+
+  async function confirmDelete() {
+    if (!deleteTarget) return;
+    const id = deleteTarget.id;
+    setDeleteTarget(null);
+    await handleDelete(id);
   }
 
   async function handleAdjustStock(id: number, delta: number) {
@@ -351,7 +360,7 @@ export default function Home() {
                               +
                             </IconButton>
                             <IconButton
-                              onClick={() => handleDelete(product.id)}
+                              onClick={() => setDeleteTarget(product)}
                               label="Delete"
                               danger
                             >
@@ -396,6 +405,14 @@ export default function Home() {
         open={copilotOpen}
         onClose={() => setCopilotOpen(false)}
         storeId={storeId}
+      />
+      <ConfirmDialog
+        open={deleteTarget !== null}
+        title="Delete this product?"
+        message={deleteTarget ? `${deleteTarget.name} will be removed from the catalog. This action cannot be undone.` : ""}
+        confirmLabel="Delete product"
+        onConfirm={confirmDelete}
+        onCancel={() => setDeleteTarget(null)}
       />
     </main>
   );

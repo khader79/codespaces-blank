@@ -24,6 +24,7 @@ const en = {
   appName: "StoreFlow",
   navDashboard: "Dashboard",
   navPos: "Point of Sale",
+  navFinance: "Finance",
   navSettings: "Settings & Billing",
   storeBadge: "Store #{id}",
   dashboardTagline:
@@ -180,6 +181,7 @@ const ar: Dict = {
   appName: "StoreFlow",
   navDashboard: "لوحة التحكم",
   navPos: "نقطة البيع",
+  navFinance: "المالية",
   navSettings: "الفواتير والاشتراك",
   storeBadge: "المتجر #{id}",
   dashboardTagline:

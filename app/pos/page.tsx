@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import AppHeader from "@/components/AppHeader";
+import AppHeader from "@/components/ClientAppHeader";
 import { getProducts, getWarehouseInventory, getWarehouses } from "@/lib/db";
 import {
   cacheProducts,

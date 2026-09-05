@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Inter } from "next/font/google";
 import "./globals.css";
 import Providers from "@/components/providers";
+import TenantAccessBanner from "@/components/TenantAccessBanner";
 
 const inter = Inter({ subsets: ["latin"] });
 
@@ -17,8 +18,8 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body className={inter.className}>
-        <Providers>{children}</Providers>
+      <body className={inter.className} suppressHydrationWarning>
+        <Providers><TenantAccessBanner /><div className="md:ps-64">{children}</div></Providers>
       </body>
     </html>
   );

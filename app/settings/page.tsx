@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import AppHeader from "@/components/AppHeader";
+import AppHeader from "@/components/ClientAppHeader";
 import { getProducts, getSales } from "@/lib/db";
 import { STORE_ID } from "@/lib/tenant";
 import { useI18n } from "@/lib/i18n";

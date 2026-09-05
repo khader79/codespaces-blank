@@ -20,7 +20,7 @@ export interface CachedWarehouse {
 
 export interface PendingOp {
   id?: number;
-  kind: "sale" | "transfer";
+  kind: "sale" | "transfer" | "invoice_draft";
   storeId: number;
   clientOpId: string;
   status: "pending" | "failed";
@@ -32,6 +32,7 @@ export interface PendingOp {
 
 class OfflineDB extends Dexie {
   products!: Table<CachedProduct, number>;
+  productSnapshots!: Table<CachedProduct, [number, number | null, number]>;
   warehouses!: Table<CachedWarehouse, number>;
   pendingOps!: Table<PendingOp, number>;
 
@@ -61,6 +62,20 @@ class OfflineDB extends Dexie {
       products: "id, [storeId+warehouseId], name",
       warehouses: "[storeId+id], storeId",
       pendingOps: "++id, storeId, status, createdAt",
+    });
+    // v5: preserve the legacy primary key and isolate warehouse snapshots so
+    // existing IndexedDB clients can upgrade without a primary-key change.
+    this.version(5).stores({
+      products: "id, [storeId+warehouseId], name",
+      productSnapshots: "[storeId+warehouseId+id], [storeId+warehouseId], id",
+      warehouses: "[storeId+id], storeId",
+      pendingOps: "++id, storeId, status, createdAt",
+    });
+    this.version(6).stores({
+      products: "id, [storeId+warehouseId], name",
+      productSnapshots: "[storeId+warehouseId+id], [storeId+warehouseId], id",
+      warehouses: "[storeId+id], storeId",
+      pendingOps: "++id, [storeId+status], storeId, status, createdAt, kind, clientOpId",
     });
   }
 }
@@ -125,16 +140,30 @@ export async function cacheProducts(
     stock: Number(p.stock) || 0,
     cachedAt: Date.now(),
   }));
-  await getDb().products.bulkPut(rows);
+  const db = getDb();
+  try {
+    await db.productSnapshots.bulkPut(rows);
+  } catch {
+    // Keep older browsers usable if the snapshot store is still upgrading.
+    await db.products.bulkPut(rows);
+  }
 }
 
 export async function getCachedProducts(
   storeId: number,
   warehouseId: number | null
 ): Promise<CachedProduct[]> {
-  const rows = await getDb()
-    .products.where({ storeId, warehouseId })
-    .toArray();
+  const db = getDb();
+  let rows: CachedProduct[];
+  try {
+    rows = await (db.productSnapshots.where("[storeId+warehouseId]") as any)
+      .equals([storeId, warehouseId])
+      .toArray();
+  } catch {
+    rows = await (db.products.where("[storeId+warehouseId]") as any)
+      .equals([storeId, warehouseId])
+      .toArray();
+  }
   return rows.sort((a, b) => a.id - b.id);
 }
 
@@ -143,19 +172,25 @@ export async function patchCachedStockById(
   warehouseId: number | null,
   delta: number
 ): Promise<void> {
-  await getDb().transaction("rw", getDb().products, async () => {
-    const rows = await getDb().products.where("id").equals(productId).toArray();
-    if (rows.length === 0) return;
-    await getDb().products.bulkPut(
-      rows
-        .filter((r) => r.warehouseId === warehouseId)
-        .map((r) => ({
-          ...r,
-          stock: Math.max(0, r.stock - delta),
-          cachedAt: Date.now(),
-        }))
-    );
-  });
+  const db = getDb();
+  let table: Table<CachedProduct, any> = db.productSnapshots;
+  let rows: CachedProduct[];
+  try {
+    rows = await table.where("id").equals(productId).toArray();
+  } catch {
+    table = db.products;
+    rows = await table.where("id").equals(productId).toArray();
+  }
+  if (rows.length === 0) return;
+  await table.bulkPut(
+    rows
+      .filter((r) => r.warehouseId === warehouseId)
+      .map((r) => ({
+        ...r,
+        stock: Math.max(0, r.stock - delta),
+        cachedAt: Date.now(),
+      }))
+  );
 }
 
 export async function enqueueOp(
@@ -222,6 +257,8 @@ export async function syncPendingOps(storeId: number): Promise<SyncResult> {
         res = await postJson("/api/pos/sale", op.payload);
       } else if (op.kind === "transfer") {
         res = await postJson("/api/transfer", op.payload);
+      } else if (op.kind === "invoice_draft") {
+        res = await postJson("/api/finance/invoices/draft", op.payload);
       } else {
         continue;
       }
