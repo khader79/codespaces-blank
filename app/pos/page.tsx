@@ -60,7 +60,13 @@ export default function PosPage() {
 
   const loadProducts = useCallback(
     async (warehouseId: number | null) => {
-      setLoading(true);
+      const cached = await getCachedProducts(storeId, warehouseId).catch(
+        () => [] as CachedProduct[]
+      );
+      if (cached.length > 0) {
+        setProducts(cached);
+        setLoading(false);
+      }
       try {
         const server = await getProducts(storeId);
         let overlaid = server;
@@ -78,10 +84,7 @@ export default function PosPage() {
         await cacheProducts(storeId, warehouseId, overlaid);
         setProducts(await getCachedProducts(storeId, warehouseId));
       } catch {
-        const cached = await getCachedProducts(storeId, warehouseId).catch(
-          () => [] as CachedProduct[]
-        );
-        setProducts(cached);
+        if (cached.length === 0) setProducts([]);
       } finally {
         setLoading(false);
       }

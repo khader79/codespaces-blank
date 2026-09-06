@@ -1,6 +1,8 @@
 import { supabase } from "@/lib/supabase";
 import { STORE_ID } from "@/lib/tenant";
 
+const INITIAL_PAGE_SIZE = 20;
+
 export interface Product {
   id: number;
   name: string;
@@ -58,24 +60,26 @@ async function readError(res: Response): Promise<Error> {
 export async function getProducts(storeId = STORE_ID): Promise<Product[]> {
   const { data, error } = await supabase
     .from("products")
-    .select("*")
+    .select("id, name, price, stock, store_id, created_at")
     .eq("store_id", storeId)
-    .order("id", { ascending: true });
+    .order("id", { ascending: true })
+    .limit(INITIAL_PAGE_SIZE);
 
   if (error) throw error;
-  return data ?? [];
+  return (data as Array<Omit<Product, "warehouse_id">> | null ?? []).map((product) => ({ ...product, warehouse_id: null }));
 }
 
 export async function getWarehouses(storeId = STORE_ID): Promise<Warehouse[]> {
   const { data, error } = await supabase
     .from("warehouses")
-    .select("*")
+    .select("id, store_id, name, is_main")
     .eq("store_id", storeId)
     .order("is_main", { ascending: false })
-    .order("id", { ascending: true });
+    .order("id", { ascending: true })
+    .limit(INITIAL_PAGE_SIZE);
 
   if (error) throw error;
-  return data ?? [];
+  return (data as Array<Omit<Warehouse, "location">> | null ?? []).map((warehouse) => ({ ...warehouse, location: null }));
 }
 
 export async function getWarehouseInventory(
@@ -84,7 +88,8 @@ export async function getWarehouseInventory(
   const { data, error } = await supabase
     .from("inventory")
     .select("product_id, quantity")
-    .eq("warehouse_id", warehouseId);
+    .eq("warehouse_id", warehouseId)
+    .limit(INITIAL_PAGE_SIZE);
 
   if (error) throw error;
   return new Map(
@@ -150,12 +155,17 @@ export async function updateProductStock(
 export async function getSales(storeId = STORE_ID): Promise<Sale[]> {
   const { data, error } = await supabase
     .from("sales")
-    .select("*")
+    .select("id, store_id, product_id, sold_at, quantity, total_price")
     .eq("store_id", storeId)
-    .order("sold_at", { ascending: true });
+    .order("sold_at", { ascending: true })
+    .limit(INITIAL_PAGE_SIZE);
 
   if (error) throw error;
-  return data ?? [];
+  return (data as Array<{ id: number; store_id: number; product_id: number | null; sold_at: string; quantity: number; total_price: number }> | null ?? []).map((sale) => ({
+    ...sale,
+    unit_price: Number(sale.quantity) ? Number(sale.total_price) / Number(sale.quantity) : 0,
+    unit_cost: 0,
+  }));
 }
 
 export async function recordSale(

@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import AppHeader from "@/components/ClientAppHeader";
 import { useI18n } from "@/lib/i18n";
 import { STORE_ID } from "@/lib/tenant";
+import ExportActions from "@/components/ExportActions";
 
 type FinanceSummary = {
   revenue: number;
@@ -60,6 +61,7 @@ export default function FinancePage() {
             <p className="mt-1 text-sm text-slate-500">Double-entry-ready reporting for sales, cash, and customer credit.</p>
           </div>
           <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-600">{summary.invoiceCount} invoices</div>
+          <ExportActions title="financial-overview" rows={[summary]} />
         </header>
 
         {error && <div className="mb-6 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>}

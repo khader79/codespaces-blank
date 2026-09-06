@@ -21,6 +21,9 @@ import CopilotDrawer from "@/components/CopilotDrawer";
 import AIAlerts from "@/components/AIAlerts";
 import TransferPanel from "@/components/TransferPanel";
 import ConfirmDialog from "@/components/ConfirmDialog";
+import LoginForm from "@/components/LoginForm";
+import { useAuth } from "@/components/AuthProvider";
+import { cacheProducts, getCachedProducts } from "@/lib/db-offline";
 
 const LOW_STOCK_THRESHOLD = 5;
 
@@ -29,7 +32,7 @@ const inputClass =
 
 const labelClass = "mb-1.5 block text-xs font-semibold text-gray-600";
 
-export default function Home() {
+function Dashboard() {
   const storeId = STORE_ID;
   const { t, money } = useI18n();
 
@@ -47,10 +50,17 @@ export default function Home() {
   const [deleteTarget, setDeleteTarget] = useState<Product | null>(null);
 
   useEffect(() => {
+    getCachedProducts(storeId, null).then((cached) => {
+      if (cached.length > 0) {
+        setProducts(cached);
+        setLoading(false);
+      }
+    }).catch(() => undefined);
     Promise.all([getProducts(storeId), getSales(storeId)])
       .then(([p, s]) => {
         setProducts(p);
         setSales(s);
+        return cacheProducts(storeId, null, p);
       })
       .catch((err) =>
         setError(err instanceof Error ? err.message : "Failed to load data.")
@@ -416,6 +426,11 @@ export default function Home() {
       />
     </main>
   );
+}
+
+export default function Home() {
+  const { user } = useAuth();
+  return user ? <Dashboard /> : <LoginForm />;
 }
 
 function StatCard({

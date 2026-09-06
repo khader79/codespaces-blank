@@ -16,6 +16,8 @@ import {
   fromUsd,
   type CurrencyCode,
 } from "@/lib/currency";
+import enMessages from "@/messages/en.json";
+import arMessages from "@/messages/ar.json";
 
 export type Locale = "en" | "ar";
 export type LangStrings = keyof typeof en;
@@ -26,6 +28,33 @@ const en = {
   navPos: "Point of Sale",
   navFinance: "Finance",
   navSettings: "Settings & Billing",
+  navCore: "Core",
+  navInventory: "Inventory",
+  navFinanceGroup: "Finance & ERP",
+  navAnalyticsGroup: "Analytics & AI",
+  navCatalog: "Catalog",
+  navTransfers: "Stock Transfers",
+  navWarehouses: "Warehouses",
+  navSuppliers: "Suppliers",
+  navInvoices: "Invoices",
+  navReceivables: "Accounts Receivable",
+  navLedger: "General Ledger",
+  navExpenses: "Expenses",
+  navReports: "P&L Reports",
+  navIntelligence: "Intelligence Hub",
+  navForecasting: "Forecasting",
+  navPurchaseOrders: "Auto-Purchase Orders",
+  forbiddenTitle: "Access denied",
+  forbiddenDescription: "Your current role does not have permission to access this workspace.",
+  returnToWorkspace: "Return to workspace",
+  selectCompany: "Select company",
+  mainStore: "Main Store",
+  selectWarehouse: "Select warehouse",
+  warehouse: "Warehouse",
+  currency: "Currency",
+  toggleTheme: "Toggle theme",
+  light: "Light",
+  dark: "Dark",
   storeBadge: "Store #{id}",
   dashboardTagline:
     "Manage your product catalog, sales, and AI insights in one place.",
@@ -179,10 +208,37 @@ export type Dict = Record<LangStrings, string>;
 
 const ar: Dict = {
   appName: "StoreFlow",
+  forbiddenTitle: "تم رفض الوصول",
+  forbiddenDescription: "لا يملك دورك الحالي صلاحية الوصول إلى مساحة العمل هذه.",
+  returnToWorkspace: "العودة إلى مساحة العمل",
   navDashboard: "لوحة التحكم",
   navPos: "نقطة البيع",
   navFinance: "المالية",
   navSettings: "الفواتير والاشتراك",
+  navCore: "الأساسي",
+  navInventory: "المخزون",
+  navFinanceGroup: "المالية وتخطيط الموارد",
+  navAnalyticsGroup: "التحليلات والذكاء الاصطناعي",
+  navCatalog: "الكتالوج",
+  navTransfers: "تحويلات المخزون",
+  navWarehouses: "المستودعات",
+  navSuppliers: "الموردون",
+  navInvoices: "الفواتير",
+  navReceivables: "الحسابات المدينة",
+  navLedger: "دفتر الأستاذ العام",
+  navExpenses: "المصروفات",
+  navReports: "تقارير الأرباح والخسائر",
+  navIntelligence: "مركز الذكاء",
+  navForecasting: "التنبؤات",
+  navPurchaseOrders: "أوامر الشراء التلقائية",
+  selectCompany: "اختيار الشركة",
+  mainStore: "المتجر الرئيسي",
+  selectWarehouse: "اختيار المستودع",
+  warehouse: "المستودع",
+  currency: "العملة",
+  toggleTheme: "تبديل المظهر",
+  light: "فاتح",
+  dark: "داكن",
   storeBadge: "المتجر #{id}",
   dashboardTagline:
     "إدارة منتجاتك ومبيعاتك ورؤى الذكاء الاصطناعي في مكان واحد.",
@@ -328,7 +384,7 @@ const ar: Dict = {
   alertLow: "منخفض",
 };
 
-export type DictKey = keyof typeof en;
+export type DictKey = keyof typeof en | `auth.${keyof typeof enMessages.auth}`;
 export type { CurrencyCode };
 
 interface I18nContextValue {
@@ -351,6 +407,14 @@ function interpolate(
   return template.replace(/\{(\w+)\}/g, (match, name: string) =>
     name in params ? String(params[name]) : match
   );
+}
+
+function getMessage(key: DictKey, locale: Locale): string {
+  if (key.startsWith("auth.")) {
+    const messageKey = key.slice(5) as keyof typeof enMessages.auth;
+    return (locale === "ar" ? arMessages.auth : enMessages.auth)[messageKey];
+  }
+  return (locale === "ar" ? ar : en)[key as keyof typeof en];
 }
 
 const STORAGE_KEYS = {
@@ -399,7 +463,7 @@ export function I18nProvider({ children }: { children: ReactNode }) {
       dir,
       setLocale,
       setCurrency,
-      t: (key, params) => interpolate(dict[key], params),
+      t: (key, params) => interpolate(getMessage(key, locale), params),
       money: (amountUsd) =>
         formatMoney(fromUsd(amountUsd, currency), currency, locale),
     }),

@@ -2,15 +2,19 @@
 
 import Link from "next/link";
 import { FormEvent, useState } from "react";
-import { ArrowRight, Building2, CheckCircle2, LockKeyhole } from "lucide-react";
+import { ArrowRight, CheckCircle2, Eye, EyeOff, KeyRound, LoaderCircle } from "lucide-react";
+import AuthShell from "@/components/AuthShell";
+import { useI18n } from "@/lib/i18n";
 
-const inputClass = "mt-2 h-12 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 outline-none transition focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10";
+const inputClass = "peer h-12 w-full rounded-xl border border-slate-200 bg-slate-50/50 px-3 pt-3 text-sm text-slate-900 outline-none transition placeholder:text-transparent focus:border-blue-500 focus:bg-white focus:ring-4 focus:ring-blue-500/10";
 
 export default function RegisterPage() {
   const [form, setForm] = useState({ companyName: "", adminFullName: "", email: "", password: "", activationCode: "" });
+  const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [working, setWorking] = useState(false);
   const [created, setCreated] = useState(false);
+  const { t } = useI18n();
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -24,13 +28,30 @@ export default function RegisterPage() {
       window.setTimeout(() => { window.location.href = "/login?registered=1"; }, 1200);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Registration failed.");
-    } finally {
       setWorking(false);
     }
   }
 
-  return <main className="flex min-h-screen items-center justify-center bg-slate-950 px-4 py-10"><div className="grid w-full max-w-5xl overflow-hidden rounded-2xl border border-slate-800 bg-white shadow-2xl lg:grid-cols-[0.85fr_1.15fr]">
-    <section className="hidden bg-slate-900 p-10 text-white lg:block"><div className="flex h-10 w-10 items-center justify-center rounded-lg bg-blue-500 font-bold">S</div><p className="mt-16 text-xs font-bold uppercase tracking-[0.2em] text-blue-300">StoreFlow Enterprise</p><h1 className="mt-4 text-4xl font-bold leading-tight">Your operation,<br />under control.</h1><p className="mt-5 max-w-xs text-sm leading-6 text-slate-300">Create an isolated workspace for your company, warehouses, inventory, and financial operations.</p><div className="mt-12 space-y-4 text-sm text-slate-300"><p className="flex items-center gap-3"><CheckCircle2 className="h-5 w-5 text-emerald-400" />30-day trial included</p><p className="flex items-center gap-3"><CheckCircle2 className="h-5 w-5 text-emerald-400" />Main warehouse provisioned automatically</p><p className="flex items-center gap-3"><CheckCircle2 className="h-5 w-5 text-emerald-400" />Secure company data isolation</p></div></section>
-    <section className="p-6 sm:p-10"><div className="flex items-center gap-3 text-slate-900 lg:hidden"><Building2 className="h-5 w-5 text-blue-600" /><span className="font-bold">StoreFlow</span></div><div className="max-w-md"><p className="mt-8 text-xs font-bold uppercase tracking-[0.18em] text-blue-600 lg:mt-0">Start your workspace</p><h2 className="mt-3 text-3xl font-bold tracking-tight text-slate-950">Create your company account</h2><p className="mt-2 text-sm text-slate-500">Your 30-day trial starts immediately. No payment gateway required.</p>{created ? <div className="mt-8 rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-800">Your workspace is ready. Redirecting to StoreFlow...</div> : <form onSubmit={submit} className="mt-8 space-y-4">{error && <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</div>}<label className="block text-sm font-semibold text-slate-700">Company name<input required value={form.companyName} onChange={(e) => setForm({ ...form, companyName: e.target.value })} className={inputClass} placeholder="Acme Trading Co." /></label><label className="block text-sm font-semibold text-slate-700">Admin full name<input required value={form.adminFullName} onChange={(e) => setForm({ ...form, adminFullName: e.target.value })} className={inputClass} placeholder="Your full name" /></label><label className="block text-sm font-semibold text-slate-700">Business email<input required type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} className={inputClass} placeholder="you@company.com" /></label><label className="block text-sm font-semibold text-slate-700">Password<span className="ml-2 text-xs font-normal text-slate-400">8 characters minimum</span><input required minLength={8} type="password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} className={inputClass} placeholder="Create a secure password" /></label><label className="block text-sm font-semibold text-slate-700">Activation code <span className="text-xs font-normal text-slate-400">optional</span><input value={form.activationCode} onChange={(e) => setForm({ ...form, activationCode: e.target.value })} className={inputClass} placeholder="Enter a voucher code" /></label><button disabled={working} className="mt-3 flex h-12 w-full items-center justify-center gap-2 rounded-lg bg-blue-600 text-sm font-bold text-white transition hover:bg-blue-700 disabled:opacity-60">{working ? "Creating workspace..." : "Create account"}<ArrowRight className="h-4 w-4" /></button><p className="flex items-center justify-center gap-2 pt-2 text-xs text-slate-400"><LockKeyhole className="h-3.5 w-3.5" />Your credentials are encrypted by Supabase Auth.</p></form>}<p className="mt-8 text-center text-sm text-slate-500">Already have an account? <Link href="/" className="font-semibold text-blue-600 hover:text-blue-700">Open StoreFlow</Link></p></div></section>
-  </div></main>;
+  function update(field: keyof typeof form, value: string) {
+    setForm((current) => ({ ...current, [field]: value }));
+  }
+
+  return <AuthShell mode="register">
+    {created ? <div className="flex min-h-[360px] flex-col items-center justify-center text-center"><span className="flex h-14 w-14 items-center justify-center rounded-full bg-emerald-50 text-emerald-600"><CheckCircle2 className="h-7 w-7" /></span><h2 className="mt-5 text-xl font-semibold text-slate-950">{t("auth.workspaceProvisioned")}</h2><p className="mt-2 max-w-xs text-sm leading-6 text-slate-500">{t("auth.workspaceReadyRedirect")}</p></div> : <>
+      {error && <div role="alert" className="mb-5 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm leading-5 text-red-700">{error}</div>}
+      <form onSubmit={submit} className="space-y-4">
+        <Field id="company-name" label={t("auth.companyName")} value={form.companyName} onChange={(value) => update("companyName", value)} autoComplete="organization" />
+        <Field id="admin-name" label={t("auth.adminFullName")} value={form.adminFullName} onChange={(value) => update("adminFullName", value)} autoComplete="name" />
+        <Field id="register-email" label={t("auth.adminEmail")} type="email" value={form.email} onChange={(value) => update("email", value)} autoComplete="email" />
+        <div className="relative"><input required minLength={8} id="register-password" type={showPassword ? "text" : "password"} value={form.password} onChange={(event) => update("password", event.target.value)} className={`${inputClass} pe-12`} autoComplete="new-password" placeholder={t("auth.password")} /><label htmlFor="register-password" className="floating-label">{t("auth.password")}</label><button type="button" onClick={() => setShowPassword((visible) => !visible)} className="absolute end-3 top-1/2 -translate-y-1/2 rounded-md p-1.5 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700" aria-label={showPassword ? t("auth.hidePassword") : t("auth.showPassword")}>{showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}</button><p className="mt-1.5 text-[11px] text-slate-400">{t("auth.passwordHint")}</p></div>
+        <div className="relative"><input id="activation-code" value={form.activationCode} onChange={(event) => update("activationCode", event.target.value)} className={`${inputClass} pe-10`} placeholder={t("auth.activationCode")} /><label htmlFor="activation-code" className="floating-label">{t("auth.activationCode")} <span className="normal-case tracking-normal text-slate-400">({t("auth.optional")})</span></label><KeyRound className="pointer-events-none absolute end-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" /></div>
+        <button disabled={working} className="mt-2 flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-blue-600 text-sm font-semibold text-white shadow-lg shadow-blue-600/20 transition hover:bg-blue-700 hover:shadow-blue-600/30 disabled:cursor-wait disabled:opacity-70">{working ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <ArrowRight className="h-4 w-4" />}{working ? t("auth.provisioning") : t("auth.createWorkspace")}</button>
+      </form>
+      <p className="mt-6 text-center text-sm text-slate-500">{t("auth.alreadyHaveAccount")} <Link href="/login" className="font-semibold text-blue-600 hover:text-blue-700">{t("auth.signInShort")}</Link></p>
+    </>}
+  </AuthShell>;
+}
+
+function Field({ id, label, value, onChange, type = "text", autoComplete }: { id: string; label: string; value: string; onChange: (value: string) => void; type?: string; autoComplete?: string }) {
+  return <div className="relative"><input required id={id} type={type} value={value} onChange={(event) => onChange(event.target.value)} className={inputClass} autoComplete={autoComplete} placeholder={label} /><label htmlFor={id} className="floating-label">{label}</label></div>;
 }

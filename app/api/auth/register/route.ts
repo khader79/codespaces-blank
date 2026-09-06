@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { getSupabaseAdmin } from "@/lib/supabase-admin";
+import { hashCredential, normalizeIdentifier } from "@/lib/auth-server";
 
 export const runtime = "nodejs";
 
@@ -33,6 +34,23 @@ export async function POST(request: Request) {
     if (provisionError) {
       await admin.auth.admin.deleteUser(created.user.id);
       return Response.json({ error: provisionError.message }, { status: 400 });
+    }
+    const { data: warehouse } = await admin.from("warehouses").select("id").eq("tenant_id", tenantId).eq("is_main", true).maybeSingle();
+    const { error: credentialError } = await admin.from("tenant_users").insert({
+      user_id: created.user.id,
+      tenant_id: tenantId,
+      warehouse_id: warehouse?.id ?? null,
+      role: "owner",
+      email: parsed.data.email,
+      username: parsed.data.email.split("@")[0],
+      identifier_normalized: normalizeIdentifier(parsed.data.email),
+      password_hash: await hashCredential(parsed.data.password),
+      allowed_warehouses: warehouse?.id ? [warehouse.id] : [],
+    });
+    if (credentialError) {
+      await admin.from("tenants").delete().eq("id", tenantId);
+      await admin.auth.admin.deleteUser(created.user.id);
+      return Response.json({ error: "Could not secure the new account." }, { status: 500 });
     }
     return Response.json({ ok: true, tenantId, message: "Account created. You can now sign in." }, { status: 201 });
   } catch (error) {

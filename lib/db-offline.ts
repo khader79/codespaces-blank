@@ -28,6 +28,8 @@ export interface PendingOp {
   createdAt: number;
   attempts: number;
   lastError?: string;
+  conflictStrategy?: "server-wins" | "client-wins";
+  nextAttemptAt?: number;
 }
 
 class OfflineDB extends Dexie {
@@ -37,41 +39,8 @@ class OfflineDB extends Dexie {
   pendingOps!: Table<PendingOp, number>;
 
   constructor() {
-    super("storeflow-offline");
+    super("storeflow-offline-v2");
     this.version(1).stores({
-      products: "id, [storeId+warehouseId], name",
-      pendingOps: "++id, createdAt, clientOpId, kind",
-    });
-    this.version(2).stores({
-      products: "id, [storeId+warehouseId], name",
-      warehouses: "[storeId+id], storeId",
-      pendingOps: "++id, createdAt, clientOpId, kind",
-    });
-    // v3: pendingOps must index storeId because listPendingOps()/pendingCount()
-    // query where("storeId"). Querying a key path that is not an index throws a
-    // Dexie SchemaError. The status column is indexed for cheap status views.
-    this.version(3).stores({
-      products: "id, [storeId+warehouseId], name",
-      warehouses: "[storeId+id], storeId",
-      pendingOps: "++id, storeId, createdAt, status, kind, clientOpId",
-    });
-    // v4: reshape pendingOps indexes to exactly (storeId, status, createdAt).
-    // Reordering is functionally equivalent for Dexie (each property gets its own
-    // index); declared so browsers already on v2/v3 upgrade cleanly.
-    this.version(4).stores({
-      products: "id, [storeId+warehouseId], name",
-      warehouses: "[storeId+id], storeId",
-      pendingOps: "++id, storeId, status, createdAt",
-    });
-    // v5: preserve the legacy primary key and isolate warehouse snapshots so
-    // existing IndexedDB clients can upgrade without a primary-key change.
-    this.version(5).stores({
-      products: "id, [storeId+warehouseId], name",
-      productSnapshots: "[storeId+warehouseId+id], [storeId+warehouseId], id",
-      warehouses: "[storeId+id], storeId",
-      pendingOps: "++id, storeId, status, createdAt",
-    });
-    this.version(6).stores({
       products: "id, [storeId+warehouseId], name",
       productSnapshots: "[storeId+warehouseId+id], [storeId+warehouseId], id",
       warehouses: "[storeId+id], storeId",
@@ -197,7 +166,8 @@ export async function enqueueOp(
   kind: PendingOp["kind"],
   storeId: number,
   payload: Record<string, unknown>,
-  clientOpId = newClientOpId()
+  clientOpId = newClientOpId(),
+  conflictStrategy: PendingOp["conflictStrategy"] = "server-wins"
 ): Promise<PendingOp> {
   const op: PendingOp = {
     kind,
@@ -207,6 +177,8 @@ export async function enqueueOp(
     payload: { ...payload, clientOpId, storeId },
     createdAt: Date.now(),
     attempts: 0,
+    conflictStrategy,
+    nextAttemptAt: Date.now(),
   };
   const id = await getDb().pendingOps.add(op);
   return { ...op, id };
@@ -251,6 +223,7 @@ export async function syncPendingOps(storeId: number): Promise<SyncResult> {
 
   const ops = await listPendingOps(storeId);
   for (const op of ops) {
+    if (op.nextAttemptAt && op.nextAttemptAt > Date.now()) continue;
     let res: Response;
     try {
       if (op.kind === "sale") {
@@ -262,7 +235,15 @@ export async function syncPendingOps(storeId: number): Promise<SyncResult> {
       } else {
         continue;
       }
-    } catch {
+    } catch (error) {
+      const attempts = (op.attempts ?? 0) + 1;
+      const delay = Math.min(60_000, 1_000 * 2 ** Math.min(attempts, 6));
+      await getDb().pendingOps.update(op.id!, {
+        attempts,
+        status: "failed",
+        lastError: error instanceof Error ? error.message : "Network error",
+        nextAttemptAt: Date.now() + delay,
+      });
       result.failed += 1;
       break;
     }
@@ -287,7 +268,12 @@ export async function syncPendingOps(storeId: number): Promise<SyncResult> {
     }
 
     const attempts = (op.attempts ?? 0) + 1;
-    await getDb().pendingOps.update(op.id!, { attempts, status: "failed" });
+    await getDb().pendingOps.update(op.id!, {
+      attempts,
+      status: "failed",
+      lastError: `HTTP ${res.status}`,
+      nextAttemptAt: Date.now() + Math.min(60_000, 1_000 * 2 ** Math.min(attempts, 6)),
+    });
     result.failed += 1;
     break;
   }

@@ -11,6 +11,8 @@
   "dependencies": {
     "@ai-sdk/google": "^1.1.0",
     "@supabase/supabase-js": "^2.45.0",
+    "@upstash/ratelimit": "^2.0.8",
+    "@upstash/redis": "^1.38.4",
     "ai": "^4.3.19",
     "dexie": "^3.2.7",
     "eslint-scope": "^7.2.2",

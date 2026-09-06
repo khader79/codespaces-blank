@@ -1,17 +1,24 @@
-export type CurrencyCode = "USD" | "EUR" | "GBP" | "AED" | "SAR";
+export type CurrencyCode = "USD" | "ILS" | "JOD";
 
-export const CURRENCIES: CurrencyCode[] = ["USD", "EUR", "GBP", "AED", "SAR"];
+export const CURRENCIES: CurrencyCode[] = ["USD", "ILS", "JOD"];
 
 export const EXCHANGE_RATES: Record<CurrencyCode, number> = {
   USD: 1,
-  EUR: 0.92,
-  GBP: 0.79,
-  AED: 3.6725,
-  SAR: 3.75,
+  ILS: 3.65,
+  JOD: 0.709,
 };
 
 export function fromUsd(amountUsd: number, currency: CurrencyCode): number {
   return (Number(amountUsd) || 0) * (EXCHANGE_RATES[currency] ?? 1);
+}
+
+export function convertCurrency(amount: number, from: CurrencyCode, to: CurrencyCode): number {
+  const usd = (Number(amount) || 0) / (EXCHANGE_RATES[from] ?? 1);
+  return Math.round(usd * (EXCHANGE_RATES[to] ?? 1) * 100) / 100;
+}
+
+export function roundMoney(amount: number): number {
+  return Math.round((Number(amount) || 0) * 100) / 100;
 }
 
 export function formatMoney(
