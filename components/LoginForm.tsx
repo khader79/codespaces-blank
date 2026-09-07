@@ -29,6 +29,10 @@ export default function LoginForm() {
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (!email.trim() || !password) {
+      setError(t("auth.requiredFields"));
+      return;
+    }
     setWorking(true);
     setError(null);
     if (remember) {
@@ -40,11 +44,12 @@ export default function LoginForm() {
     }
     const signInResult = await signIn(email, password);
     if (typeof signInResult === "string") {
-      setError(signInResult);
+      setError(t("auth.signInError"));
       setWorking(false);
     } else {
+      const role = normalizeRole(signInResult.role);
       const next = new URLSearchParams(window.location.search).get("next");
-      const destination = normalizeRole(signInResult.role) === "SUPER_ADMIN"
+      const destination = role === "SUPER_ADMIN"
         ? "/super-admin"
         : next?.startsWith("/") ? next : defaultWorkspace(signInResult.role);
       window.location.href = destination;
@@ -56,7 +61,7 @@ export default function LoginForm() {
     {error && <div role="alert" className="mb-6 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm leading-5 text-red-700">{error}</div>}
     <form onSubmit={submit} className="space-y-5">
       <FloatingField id="login-email" label={t("auth.identifier")} value={email} onChange={setEmail} autoComplete="username" />
-      <div className="relative"><input required id="login-password" type={showPassword ? "text" : "password"} value={password} onChange={(event) => setPassword(event.target.value)} className={`${inputClass} pe-12`} autoComplete="current-password" placeholder={t("auth.password")} /><label htmlFor="login-password" className="floating-label">{t("auth.password")}</label><button type="button" onClick={() => setShowPassword((visible) => !visible)} className="absolute end-3 top-1/2 -translate-y-1/2 rounded-md p-1.5 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700" aria-label={showPassword ? t("auth.hidePassword") : t("auth.showPassword")}>{showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}</button></div>
+      <div className="relative"><input id="login-password" type={showPassword ? "text" : "password"} value={password} onChange={(event) => setPassword(event.target.value)} className={`${inputClass} pe-12`} autoComplete="current-password" placeholder={t("auth.password")} /><label htmlFor="login-password" className="floating-label">{t("auth.password")}</label><button type="button" onClick={() => setShowPassword((visible) => !visible)} className="absolute end-3 top-1/2 -translate-y-1/2 rounded-md p-1.5 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700" aria-label={showPassword ? t("auth.hidePassword") : t("auth.showPassword")}>{showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}</button></div>
       <div className="flex items-center justify-between gap-3"><label className="flex items-center gap-2 text-xs font-medium text-slate-500"><input type="checkbox" checked={remember} onChange={(event) => setRemember(event.target.checked)} className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500" />{t("auth.rememberMe")}</label><a href="mailto:support@storeflow.com?subject=Password%20reset%20request" className="text-xs font-semibold text-blue-600 transition hover:text-blue-700">{t("auth.forgotPassword")}</a></div>
       <button disabled={working} className="flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-blue-600 text-sm font-semibold text-white shadow-lg shadow-blue-600/20 transition hover:bg-blue-700 hover:shadow-blue-600/30 disabled:cursor-wait disabled:opacity-70">{working ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <LogIn className="h-4 w-4" />}{working ? t("auth.authenticating") : t("auth.signIn")}{!working && <ArrowRight className="h-4 w-4" />}</button>
     </form>
@@ -66,5 +71,5 @@ export default function LoginForm() {
 }
 
 function FloatingField({ id, label, value, onChange, type = "text", autoComplete }: { id: string; label: string; value: string; onChange: (value: string) => void; type?: string; autoComplete?: string }) {
-  return <div className="relative"><input required id={id} type={type} value={value} onChange={(event) => onChange(event.target.value)} className={inputClass} autoComplete={autoComplete} placeholder={label} /><label htmlFor={id} className="floating-label">{label}</label></div>;
+  return <div className="relative"><input id={id} type={type} value={value} onChange={(event) => onChange(event.target.value)} className={inputClass} autoComplete={autoComplete} placeholder={label} /><label htmlFor={id} className="floating-label">{label}</label></div>;
 }

@@ -16,14 +16,18 @@ function jwtSecret() {
 
 export async function middleware(request: NextRequest) {
   const path = request.nextUrl.pathname;
+  const isDefaultEntry = path === "/" || path === "/dashboard";
   const requiredRole = path.startsWith("/super-admin") ? "SUPER_ADMIN" : path.startsWith("/settings") || path.startsWith("/finance") ? "TENANT_OWNER" : path.startsWith("/inventory/transfers") ? "WAREHOUSE_MANAGER" : path.startsWith("/pos") ? "CASHIER" : null;
-  if (!requiredRole) return NextResponse.next();
   const token = request.cookies.get("storeflow-access")?.value;
   const secret = jwtSecret();
+  if (!requiredRole && !isDefaultEntry) return NextResponse.next();
+  if (isDefaultEntry && (!token || !secret)) return NextResponse.next();
   if (!token || !secret) return NextResponse.redirect(new URL(`/login?next=${encodeURIComponent(path)}`, request.url));
   try {
     const { payload } = await jwtVerify(token, secret, { algorithms: ["HS256"] });
     const role = canonicalRole(payload.role);
+    if (payload.token_type === "access" && role === "SUPER_ADMIN" && !path.startsWith("/super-admin")) return NextResponse.redirect(new URL("/super-admin", request.url));
+    if (!requiredRole) return NextResponse.next();
     if (payload.token_type !== "access" || !role || roleRank[role] < roleRank[requiredRole]) throw new Error("Forbidden");
     return NextResponse.next();
   } catch {
@@ -31,4 +35,4 @@ export async function middleware(request: NextRequest) {
   }
 }
 
-export const config = { matcher: ["/super-admin/:path*", "/settings/:path*", "/finance/:path*", "/inventory/transfers/:path*", "/pos/:path*"] };
+export const config = { matcher: ["/", "/dashboard/:path*", "/super-admin/:path*", "/settings/:path*", "/finance/:path*", "/inventory/transfers/:path*", "/pos/:path*"] };

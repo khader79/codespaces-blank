@@ -20,10 +20,12 @@ export async function GET() {
     await requireSuperAdmin();
     try {
       const admin = getSupabaseAdmin();
-      const [tenantResult, userResult, salesResult, auditResult, planResult, maintenanceResult] = await Promise.all([
-        admin.from("tenants").select("id, name, status, plan_status, subscription_plan, max_users, max_warehouses, created_at, subscription_expires_at").order("created_at", { ascending: false }),
+      const [tenantResult, userResult, salesResult, auditResult, warehouseResult, productResult, planResult, maintenanceResult] = await Promise.all([
+        admin.from("tenants").select("id, name, slug, status, plan_status, subscription_plan, max_users, max_warehouses, created_at, subscription_expires_at").order("created_at", { ascending: false }),
         admin.from("tenant_users").select("tenant_id, email, role, created_at").eq("is_active", true),
         admin.from("sales").select("quantity, unit_price, sold_at"),
+        admin.from("warehouses").select("id", { count: "exact", head: true }),
+        admin.from("products").select("id", { count: "exact", head: true }),
         admin.from("system_audit_logs").select("id, actor_user_id, action, target_type, target_id, metadata, created_at").order("created_at", { ascending: false }).limit(50),
         admin.from("platform_plans").select("id, name, monthly_price, feature_flags, updated_at").order("monthly_price"),
         admin.from("platform_settings").select("maintenance_mode").eq("id", 1).maybeSingle(),
@@ -58,7 +60,7 @@ export async function GET() {
         }),
         plans: planResult.error ? [] : planResult.data ?? [],
         maintenance: maintenanceResult.error ? false : Boolean(maintenanceResult.data?.maintenance_mode),
-        metrics: { activeTenants: activeTenants.length, mrr, totalUsers: users.length, transactionVolume: monthlySales.length, systemHealth: "healthy" },
+        metrics: { activeTenants: activeTenants.length, totalCompanies: tenants.length, totalUsers: users.length, totalWarehouses: warehouseResult.count ?? 0, totalProducts: productResult.count ?? 0, mrr, transactionVolume: monthlySales.length, systemHealth: "healthy" },
         auditLogs: auditResult.data ?? [],
       });
     } catch {
@@ -69,6 +71,7 @@ export async function GET() {
 
 const updateSchema = z.union([
   z.object({ action: z.literal("status"), tenantId: z.number().int().positive(), status: z.enum(["active", "suspended"]), planStatus: z.enum(["trial", "active", "suspended"]).optional() }),
+  z.object({ action: z.literal("delete"), tenantId: z.number().int().positive() }),
   z.object({ action: z.literal("plan"), tenantId: z.number().int().positive(), planStatus: z.enum(["trial", "active", "suspended"]).optional(), subscriptionPlan: z.enum(["free", "pro", "enterprise"]).optional() }).refine((value) => Boolean(value.planStatus || value.subscriptionPlan)),
   z.object({ action: z.literal("limits"), tenantId: z.number().int().positive(), maxUsers: z.number().int().positive().max(100000), maxWarehouses: z.number().int().positive().max(10000) }),
   z.object({ action: z.literal("reset-password"), tenantId: z.number().int().positive() }),
@@ -85,6 +88,12 @@ export async function PATCH(request: Request) {
     const parsed = updateSchema.safeParse(await request.json().catch(() => null));
     if (!parsed.success) return Response.json({ error: "Invalid platform operation." }, { status: 400 });
     const admin = getSupabaseAdmin();
+    if (parsed.data.action === "delete") {
+      const { error } = await admin.from("tenants").delete().eq("id", parsed.data.tenantId);
+      if (error) return Response.json({ error: error.message }, { status: 503 });
+      await audit(claims.user_id, "tenant.deleted", "tenant", parsed.data.tenantId);
+      return Response.json({ ok: true });
+    }
     if (parsed.data.action === "maintenance") {
       const { error } = await admin.from("platform_settings").upsert({ id: 1, maintenance_mode: parsed.data.enabled, updated_by: claims.user_id }, { onConflict: "id" });
       if (error) return Response.json({ error: error.message }, { status: 503 });

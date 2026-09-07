@@ -13,12 +13,9 @@ import { getWarehouses, type Warehouse } from "@/lib/db";
 import { cacheWarehouses, getCachedWarehouses } from "@/lib/db-offline";
 import { NAVIGATION_GROUPS } from "@/config/navigation";
 import LanguageSwitcher from "@/components/LanguageSwitcher";
-import { useAuth } from "@/components/AuthProvider";
-import { normalizeRole } from "@/lib/rbac";
 
 export default function AppHeader() {
   const { t, currency, setCurrency } = useI18n();
-  const { user } = useAuth();
   const pathname = usePathname();
   const router = useRouter();
   const [collapsed, setCollapsed] = useState(false);
@@ -50,8 +47,6 @@ export default function AppHeader() {
     if (link.href.includes("?")) return false;
     return link.exact ? pathname === link.href : pathname.startsWith(link.href);
   };
-  const isSuperAdmin = normalizeRole(user?.role) === "SUPER_ADMIN";
-
   return (
     <>
       <aside className={`fixed inset-y-0 start-0 z-40 hidden flex-col border-e border-slate-200/80 bg-white transition-[width] duration-200 md:flex ${collapsed ? "w-20" : "w-64"}`}>
@@ -74,7 +69,6 @@ export default function AppHeader() {
           <div className="flex items-center gap-3"><button type="button" className="rounded-lg p-2 text-slate-500 hover:bg-slate-100 md:hidden" onClick={() => setMobileOpen(true)} aria-label="Open menu"><Menu className="h-5 w-5" /></button><CommandBar /></div>
         <div className="flex items-center gap-2">
           <UserGuide />
-          {isSuperAdmin && !pathname.startsWith("/super-admin") && <Link href="/super-admin" className="hidden h-9 items-center rounded-lg bg-slate-950 px-3 text-xs font-bold text-white transition hover:bg-slate-800 sm:inline-flex">Switch to Platform Admin</Link>}
           <select value={activeTenant} onChange={(event) => setActiveTenant(event.target.value)} aria-label={t("selectCompany" as never)} className="hidden h-9 max-w-36 rounded-lg border border-slate-200 bg-white px-2 text-xs font-semibold text-slate-700 lg:block">
             <option value="1">{t("mainStore" as never)}</option>
           </select>

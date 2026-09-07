@@ -14,16 +14,19 @@ export default function AuthGate({ children }: { children: ReactNode }) {
   const role = normalizeRole(user?.role);
   const superAdminRoute = pathname.startsWith("/super-admin");
   const canAccessSuperAdmin = role === "SUPER_ADMIN";
+  const tenantRoute = !publicPaths.has(pathname) && !superAdminRoute;
 
   useEffect(() => {
     if (!loading && !user && !publicPaths.has(pathname)) router.replace("/");
     if (!loading && user && superAdminRoute && !canAccessSuperAdmin) router.replace("/403");
+    if (!loading && user && tenantRoute && canAccessSuperAdmin) router.replace("/super-admin");
     if (!loading && user && pathname === "/admin" && user.role !== "admin") router.replace("/403");
-  }, [canAccessSuperAdmin, loading, pathname, router, superAdminRoute, user]);
+  }, [canAccessSuperAdmin, loading, pathname, router, superAdminRoute, tenantRoute, user]);
 
   if (loading && !publicPaths.has(pathname)) return <div className="min-h-screen bg-slate-950" />;
   if (!user && !publicPaths.has(pathname)) return null;
   if (superAdminRoute && !canAccessSuperAdmin) return null;
+  if (tenantRoute && canAccessSuperAdmin) return null;
   if (pathname === "/admin" && user?.role !== "admin") return null;
   return <>{children}</>;
 }
