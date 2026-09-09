@@ -80,7 +80,7 @@ CREATE OR REPLACE FUNCTION can_access_warehouse(target_tenant_id bigint, target_
     AND (app_role() IN ('SUPER_ADMIN', 'TENANT_OWNER')
       OR app_role() = 'WAREHOUSE_MANAGER' AND (
         target_warehouse_id = app_assigned_warehouse_id()
-        OR target_warehouse_id = ANY(COALESCE((auth.jwt() -> 'allowed_warehouses')::bigint[], '{}'::bigint[]))
+        OR target_warehouse_id = ANY(COALESCE(NULLIF(auth.jwt() ->> 'allowed_warehouses', '')::bigint[], '{}'::bigint[]))
       )
       OR app_role() = 'CASHIER' AND target_warehouse_id = app_assigned_warehouse_id());
 $$ LANGUAGE sql STABLE;

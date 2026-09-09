@@ -1,5 +1,6 @@
 import { STORE_ID } from "@/lib/tenant";
 import { serverTransfer, formatAuditError } from "@/lib/server-ops";
+import { getClientIp } from "@/lib/audit";
 
 export const runtime = "nodejs";
 export const maxDuration = 15;
@@ -42,6 +43,7 @@ export async function POST(req: Request) {
       quantity,
       note: typeof body.note === "string" && body.note.trim() ? body.note.trim() : null,
       userId: typeof body.userId === "string" && body.userId ? body.userId : null,
+      ip: getClientIp(req),
     });
     return Response.json({ ok: true });
   } catch (err) {

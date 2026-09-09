@@ -11,22 +11,41 @@ const emptyDashboard = {
   stats: {},
   plans: [],
   maintenance: false,
-  metrics: { activeTenants: 0, mrr: 0, totalUsers: 0, transactionVolume: 0, systemHealth: "degraded" },
+  metrics: { activeTenants: 0, totalCompanies: 0, totalUsers: 0, totalWarehouses: 0, totalProducts: 0, mrr: 0, transactionVolume: 0, suspendedTenants: 0, systemHealth: "degraded" },
+  analytics: { monthlySignups: [], revenueTrend: [], salesVolume: [], planDistribution: [], roleDistribution: [], auditActivity: [] },
+  topTenants: [],
   auditLogs: [],
+  tenantAuditLogs: [],
 };
+
+function lastMonths(count: number) {
+  const labels: string[] = [];
+  const now = new Date();
+  now.setUTCDate(1);
+  for (let index = count - 1; index >= 0; index -= 1) {
+    const cursor = new Date(now);
+    cursor.setUTCMonth(now.getUTCMonth() - index);
+    labels.push(cursor.toISOString().slice(0, 7));
+  }
+  return labels;
+}
 
 export async function GET() {
   try {
     await requireSuperAdmin();
     try {
       const admin = getSupabaseAdmin();
-      const [tenantResult, userResult, salesResult, auditResult, warehouseResult, productResult, planResult, maintenanceResult] = await Promise.all([
+      const [tenantResult, userResult, salesResult, invoiceResult, auditResult, tenantAuditResult, warehouseResult, productResult, warehouseByTenantResult, productByTenantResult, planResult, maintenanceResult] = await Promise.all([
         admin.from("tenants").select("id, name, slug, status, plan_status, subscription_plan, max_users, max_warehouses, created_at, subscription_expires_at").order("created_at", { ascending: false }),
         admin.from("tenant_users").select("tenant_id, email, role, created_at").eq("is_active", true),
         admin.from("sales").select("quantity, unit_price, sold_at"),
+        admin.from("invoices").select("total, issued_at"),
+        admin.from("system_audit_logs").select("id, actor_user_id, action, target_type, target_id, metadata, created_at").order("created_at", { ascending: false }).limit(100),
+        admin.from("audit_logs").select("id, tenant_id, user_id, action, entity_type, entity_id, metadata, ip_address, created_at").order("created_at", { ascending: false }).limit(100),
         admin.from("warehouses").select("id", { count: "exact", head: true }),
         admin.from("products").select("id", { count: "exact", head: true }),
-        admin.from("system_audit_logs").select("id, actor_user_id, action, target_type, target_id, metadata, created_at").order("created_at", { ascending: false }).limit(50),
+        admin.from("warehouses").select("tenant_id"),
+        admin.from("products").select("tenant_id"),
         admin.from("platform_plans").select("id, name, monthly_price, feature_flags, updated_at").order("monthly_price"),
         admin.from("platform_settings").select("maintenance_mode").eq("id", 1).maybeSingle(),
       ]);
@@ -35,6 +54,10 @@ export async function GET() {
       const tenants = tenantResult.data ?? [];
       const users = userResult.data ?? [];
       const sales = salesResult.data ?? [];
+      const invoices = invoiceResult.error ? [] : (invoiceResult.data ?? []);
+      const plans = planResult.error ? [] : (planResult.data ?? []);
+      const planPrice = new Map(plans.map((plan) => [plan?.id, Number(plan?.monthly_price ?? 0)]));
+
       const usersByTenant = new Map<number, { email: string | null; count: number }>();
       for (const user of users) {
         const tenantId = Number(user?.tenant_id);
@@ -44,6 +67,7 @@ export async function GET() {
         current.count += 1;
         usersByTenant.set(tenantId, current);
       }
+
       const monthStart = new Date();
       monthStart.setUTCDate(1);
       const monthlySales = sales.filter((sale) => {
@@ -51,17 +75,83 @@ export async function GET() {
         return Number.isFinite(soldAt) && soldAt >= monthStart.getTime();
       });
       const activeTenants = tenants.filter((tenant) => tenant?.status === "active");
-      const mrr = activeTenants.reduce((total, tenant) => total + (tenant?.plan_status === "active" ? 99 : 0), 0);
+      const mrr = activeTenants.reduce((total, tenant) => total + (tenant?.plan_status === "active" ? (planPrice.get(tenant?.subscription_plan ?? "") ?? 99) : 0), 0);
+
+      const months = lastMonths(12);
+      const startOfRange = new Date(`${months[0]}-01T00:00:00.000Z`).getTime();
+      const monthOf = (value: unknown) => {
+        const time = value ? new Date(value as string).getTime() : NaN;
+        if (!Number.isFinite(time) || time < startOfRange) return null;
+        return new Date(time).toISOString().slice(0, 7);
+      };
+
+      const signupBuckets = new Map(months.map((month) => [month, 0]));
+      for (const tenant of tenants) { const key = monthOf(tenant?.created_at); if (key) signupBuckets.set(key, (signupBuckets.get(key) ?? 0) + 1); }
+
+      const salesBuckets = new Map(months.map((month) => [month, { count: 0, revenue: 0 }]));
+      for (const sale of sales) {
+        const key = monthOf(sale?.sold_at); if (!key) continue;
+        const bucket = salesBuckets.get(key)!;
+        bucket.count += Number(sale?.quantity ?? 0);
+        bucket.revenue += Number(sale?.quantity ?? 0) * Number(sale?.unit_price ?? 0);
+      }
+      const invoiceBuckets = new Map(months.map((month) => [month, 0]));
+      for (const invoice of invoices) {
+        const key = monthOf(invoice?.issued_at); if (!key) continue;
+        invoiceBuckets.set(key, (invoiceBuckets.get(key) ?? 0) + Number(invoice?.total ?? 0));
+      }
+
+      const planDistribution = new Map<string, number>();
+      for (const tenant of tenants) { const plan = tenant?.subscription_plan ?? "free"; planDistribution.set(plan, (planDistribution.get(plan) ?? 0) + 1); }
+      const roleDistribution = new Map<string, number>();
+      for (const user of users) { const role = user?.role ?? "unknown"; roleDistribution.set(role, (roleDistribution.get(role) ?? 0) + 1); }
+      const auditActivity = new Map(months.map((month) => [month, 0]));
+      for (const log of auditResult.data ?? []) { const key = monthOf(log?.created_at); if (key) auditActivity.set(key, (auditActivity.get(key) ?? 0) + 1); }
+
+      const warehouseCounts = new Map<number, number>();
+      for (const warehouse of warehouseByTenantResult.data ?? []) { const id = Number(warehouse?.tenant_id); if (Number.isFinite(id)) warehouseCounts.set(id, (warehouseCounts.get(id) ?? 0) + 1); }
+      const productCounts = new Map<number, number>();
+      for (const product of productByTenantResult.data ?? []) { const id = Number(product?.tenant_id); if (Number.isFinite(id)) productCounts.set(id, (productCounts.get(id) ?? 0) + 1); }
+
+      const topTenants = tenants
+        .map((tenant) => {
+          const id = Number(tenant?.id);
+          const summary = usersByTenant.get(id);
+          return { id, name: tenant?.name, slug: tenant?.slug, status: tenant?.status, user_count: summary?.count ?? 0, warehouse_count: warehouseCounts.get(id) ?? 0, product_count: productCounts.get(id) ?? 0 };
+        })
+        .sort((a, b) => b.user_count - a.user_count)
+        .slice(0, 5);
+
       return Response.json({
         tenants: tenants.map((tenant) => {
           const tenantId = Number(tenant?.id);
           const summary = usersByTenant.get(tenantId);
-          return { ...tenant, admin_email: summary?.email ?? null, user_count: summary?.count ?? 0 };
+          return { ...tenant, admin_email: summary?.email ?? null, user_count: summary?.count ?? 0, warehouse_count: warehouseCounts.get(tenantId) ?? 0, product_count: productCounts.get(tenantId) ?? 0 };
         }),
-        plans: planResult.error ? [] : planResult.data ?? [],
+        plans,
         maintenance: maintenanceResult.error ? false : Boolean(maintenanceResult.data?.maintenance_mode),
-        metrics: { activeTenants: activeTenants.length, totalCompanies: tenants.length, totalUsers: users.length, totalWarehouses: warehouseResult.count ?? 0, totalProducts: productResult.count ?? 0, mrr, transactionVolume: monthlySales.length, systemHealth: "healthy" },
+        metrics: {
+          activeTenants: activeTenants.length,
+          totalCompanies: tenants.length,
+          totalUsers: users.length,
+          totalWarehouses: warehouseResult.count ?? 0,
+          totalProducts: productResult.count ?? 0,
+          mrr,
+          transactionVolume: monthlySales.length,
+          suspendedTenants: tenants.filter((tenant) => tenant?.status === "suspended").length,
+          systemHealth: "healthy",
+        },
+        analytics: {
+          monthlySignups: months.map((month) => ({ month, count: signupBuckets.get(month) ?? 0 })),
+          revenueTrend: months.map((month) => ({ month, revenue: Math.round((invoiceBuckets.get(month) ?? 0) * 100) / 100 })),
+          salesVolume: months.map((month) => ({ month, ...(salesBuckets.get(month) ?? { count: 0, revenue: 0 }) })),
+          planDistribution: Array.from(planDistribution.entries()).map(([name, value]) => ({ name, value })),
+          roleDistribution: Array.from(roleDistribution.entries()).map(([name, value]) => ({ name, value })),
+          auditActivity: months.map((month) => ({ month, count: auditActivity.get(month) ?? 0 })),
+        },
+        topTenants,
         auditLogs: auditResult.data ?? [],
+        tenantAuditLogs: tenantAuditResult.error ? [] : (tenantAuditResult.data ?? []),
       });
     } catch {
       return Response.json(emptyDashboard);
@@ -130,7 +220,7 @@ export async function PATCH(request: Request) {
       const tenant = await admin.from("tenants").select("id, name").eq("id", parsed.data.tenantId).single();
       if (tenant.error) return Response.json({ error: "Tenant not found." }, { status: 404 });
       const response = NextResponse.json({ ok: true, tenant: tenant.data });
-      const token = await createSessionToken({ user_id: claims.user_id, tenant_id: parsed.data.tenantId, warehouse_id: null, role: "owner", allowed_warehouses: [], token_type: "operator" }, "30m");
+      const token = await createSessionToken({ user_id: claims.user_id, tenant_id: parsed.data.tenantId, tenant_name: tenant.data.name, warehouse_id: null, role: "owner", allowed_warehouses: [], token_type: "operator" }, "30m");
       response.cookies.set(OPERATOR_COOKIE, token, { ...secureCookie, maxAge: 1800 });
       await audit(claims.user_id, "tenant.impersonated", "tenant", parsed.data.tenantId, { mode: "read_write", expires_in_minutes: 30 });
       return response;

@@ -1,4 +1,6 @@
-import { supabase } from "@/lib/supabase";
+import { getServerDataClient } from "@/lib/supabase-admin";
+
+const supabase = getServerDataClient();
 
 const COST_RATIO = 0.6;
 
@@ -20,6 +22,46 @@ export interface AuditEntry {
 }
 
 const toNumber = (value: unknown): number => Number(value ?? 0);
+
+const STORE_TENANT_CACHE_TTL_MS = 300_000;
+const storeTenantCache = new Map<number, { tenantId: number; at: number }>();
+
+/** Resolve the owning tenant for a store id (cached). */
+async function tenantIdForStore(storeId: number): Promise<number> {
+  const cached = storeTenantCache.get(storeId);
+  if (cached && Date.now() - cached.at < STORE_TENANT_CACHE_TTL_MS) return cached.tenantId;
+  const { data } = await supabase
+    .from("stores")
+    .select("tenant_id")
+    .eq("id", storeId)
+    .maybeSingle();
+  const tenantId = data && data.tenant_id ? Number(data.tenant_id) : storeId;
+  storeTenantCache.set(storeId, { tenantId, at: Date.now() });
+  return tenantId;
+}
+
+async function writeStockLedger(input: {
+  tenantId: number;
+  warehouseId: number | null;
+  productId: number;
+  movementType: string;
+  quantity: number;
+  referenceType: string;
+  referenceId: number | null;
+  idempotencyKey: string;
+}): Promise<void> {
+  const { error } = await supabase.from("stock_ledger").insert({
+    tenant_id: input.tenantId,
+    warehouse_id: input.warehouseId,
+    product_id: input.productId,
+    movement_type: input.movementType,
+    quantity: input.quantity,
+    reference_type: input.referenceType,
+    reference_id: input.referenceId,
+    idempotency_key: input.idempotencyKey,
+  });
+  if (error) throw error;
+}
 
 export function formatAuditError(err: unknown): string {
   if (err instanceof Error) return err.message;
@@ -67,7 +109,8 @@ async function getWarehouseQty(
 async function upsertInventoryQty(
   warehouseId: number,
   productId: number,
-  quantity: number
+  quantity: number,
+  tenantId?: number
 ): Promise<void> {
   const { error } = await supabase
     .from("inventory")
@@ -76,6 +119,7 @@ async function upsertInventoryQty(
         warehouse_id: warehouseId,
         product_id: productId,
         quantity,
+        ...(tenantId ? { tenant_id: tenantId } : {}),
         updated_at: new Date().toISOString(),
       },
       { onConflict: "warehouse_id,product_id" }
@@ -98,9 +142,12 @@ async function syncProductStock(storeId: number, productId: number): Promise<voi
 export async function logAudit(
   storeId: number,
   userId: string | null,
-  entry: AuditEntry
+  entry: AuditEntry,
+  options: { ip?: string | null } = {}
 ): Promise<void> {
+  const tenantId = await tenantIdForStore(storeId);
   const { error } = await supabase.from("audit_logs").insert({
+    tenant_id: tenantId,
     store_id: storeId,
     user_id: userId,
     action: entry.action,
@@ -109,6 +156,7 @@ export async function logAudit(
     old_value: entry.oldValue ?? null,
     new_value: entry.newValue ?? null,
     metadata: entry.metadata ?? null,
+    ip_address: options.ip ?? null,
   });
   if (error) throw error;
 }
@@ -123,6 +171,7 @@ export async function serverRecordSale(
     clientOpId?: string | null;
     items: Array<{ product_id: number; quantity: number }>;
     userId?: string | null;
+    ip?: string | null;
   }
 ): Promise<{ duplicate: boolean }> {
   await assertTenantWritable(storeId);
@@ -180,7 +229,7 @@ export async function serverRecordSale(
     const stockAfter = stockBefore - item.quantity;
 
     if (warehouseId) {
-      await upsertInventoryQty(warehouseId, item.product_id, stockAfter);
+      await upsertInventoryQty(warehouseId, item.product_id, stockAfter, await tenantIdForStore(storeId));
     } else {
       const { error } = await supabase
         .from("products")
@@ -227,6 +276,18 @@ export async function serverRecordSale(
         stock_before: stockBefore,
         stock_after: stockAfter,
       },
+    }, { ip: input.ip ?? null });
+
+    const movementWarehouseId = warehouseId ?? main?.id ?? null;
+    await writeStockLedger({
+      tenantId: await tenantIdForStore(storeId),
+      warehouseId: movementWarehouseId,
+      productId: item.product_id,
+      movementType: "sale",
+      quantity: -item.quantity,
+      referenceType: "sale",
+      referenceId: saleId,
+      idempotencyKey: `sale-${saleId ?? "n/a"}-${item.product_id}`,
     });
   }
 
@@ -245,6 +306,7 @@ export async function serverTransfer(
     quantity: number;
     note?: string | null;
     userId?: string | null;
+    ip?: string | null;
   }
 ): Promise<{ ok: true }> {
   await assertTenantWritable(storeId);
@@ -281,18 +343,20 @@ export async function serverTransfer(
   }
 
   const destBefore = await getWarehouseQty(toWarehouseId, productId);
-  await upsertInventoryQty(fromWarehouseId, productId, sourceBefore - quantity);
-  await upsertInventoryQty(toWarehouseId, productId, destBefore + quantity);
+  const transferTenantId = await tenantIdForStore(storeId);
+  await upsertInventoryQty(fromWarehouseId, productId, sourceBefore - quantity, transferTenantId);
+  await upsertInventoryQty(toWarehouseId, productId, destBefore + quantity, transferTenantId);
 
   const main = await getMainWarehouse(storeId);
   if (main && (main.id === fromWarehouseId || main.id === toWarehouseId)) {
     await syncProductStock(storeId, productId);
   }
 
-  const { error: transferError } = await supabase
+const { error: transferInsertError, data: transferInserted } = await supabase
     .from("stock_transfers")
     .insert({
       store_id: storeId,
+      tenant_id: await tenantIdForStore(storeId),
       product_id: productId,
       from_warehouse_id: fromWarehouseId,
       to_warehouse_id: toWarehouseId,
@@ -300,22 +364,49 @@ export async function serverTransfer(
       status: "completed",
       note: input.note ?? null,
       created_by_user_id: input.userId ?? null,
-    });
-  if (transferError) throw transferError;
+    })
+    .select("id")
+    .single();
+  if (transferInsertError) throw transferInsertError;
+  const transferId =
+    transferInserted && "id" in transferInserted ? Number(transferInserted.id) : null;
+
+  const tenantId = await tenantIdForStore(storeId);
+  await writeStockLedger({
+    tenantId,
+    warehouseId: fromWarehouseId,
+    productId,
+    movementType: "transfer_out",
+    quantity: -quantity,
+    referenceType: "stock_transfer",
+    referenceId: transferId,
+    idempotencyKey: `transfer-${transferId ?? "n/a"}-out`,
+  });
+  await writeStockLedger({
+    tenantId,
+    warehouseId: toWarehouseId,
+    productId,
+    movementType: "transfer_in",
+    quantity,
+    referenceType: "stock_transfer",
+    referenceId: transferId,
+    idempotencyKey: `transfer-${transferId ?? "n/a"}-in`,
+  });
 
   await logAudit(storeId, input.userId ?? null, {
-    action: "transfer_completed",
-    entityType: "stock_transfer",
-    oldValue: {
-      from: { warehouse_id: fromWarehouseId, quantity: sourceBefore },
-      to: { warehouse_id: toWarehouseId, quantity: destBefore },
-    },
-    newValue: {
-      from: { warehouse_id: fromWarehouseId, quantity: sourceBefore - quantity },
-      to: { warehouse_id: toWarehouseId, quantity: destBefore + quantity },
-    },
-    metadata: { product_id: productId, product_name: product.name, note: input.note ?? null },
-  });
+      action: "transfer_completed",
+      entityType: "stock_transfer",
+      entityId: transferId,
+      oldValue: {
+        from: { warehouse_id: fromWarehouseId, quantity: sourceBefore },
+        to: { warehouse_id: toWarehouseId, quantity: destBefore },
+      },
+      newValue: {
+        from: { warehouse_id: fromWarehouseId, quantity: sourceBefore - quantity },
+        to: { warehouse_id: toWarehouseId, quantity: destBefore + quantity },
+      },
+      metadata: { product_id: productId, product_name: product.name, note: input.note ?? null },
+    }, { ip: input.ip ?? null });
 
   return { ok: true };
 }
@@ -325,7 +416,7 @@ export async function serverTransfer(
 // ---------------------------------------------------------------------------
 export async function serverCreateProduct(
   storeId: number,
-  input: { name: string; price: number; stock: number; userId?: string | null }
+  input: { name: string; price: number; stock: number; userId?: string | null; ip?: string | null }
 ): Promise<{ id: number }> {
   await assertTenantWritable(storeId);
   const { data: created, error } = await supabase
@@ -335,20 +426,27 @@ export async function serverCreateProduct(
     .single();
   if (error) throw error;
 
+  const productId = Number(created.id);
+  const tenantId = await tenantIdForStore(storeId);
+  await supabase
+    .from("products")
+    .update({ tenant_id: tenantId })
+    .eq("id", productId);
+
   const main = await getMainWarehouse(storeId);
   if (main) {
-    await upsertInventoryQty(main.id, Number(created.id), input.stock);
+    await upsertInventoryQty(main.id, productId, input.stock, tenantId);
   }
 
   await logAudit(storeId, input.userId ?? null, {
     action: "product_created",
     entityType: "product",
-    entityId: Number(created.id),
+    entityId: productId,
     newValue: { name: input.name, price: input.price, stock: input.stock },
     metadata: { warehouse_id: main?.id ?? null },
-  });
+  }, { ip: input.ip ?? null });
 
-  return { id: Number(created.id) };
+  return { id: productId };
 }
 
 export async function serverUpdateProduct(
@@ -359,6 +457,7 @@ export async function serverUpdateProduct(
     price?: number;
     stock?: number;
     userId?: string | null;
+    ip?: string | null;
   }
 ): Promise<{ ok: true }> {
   await assertTenantWritable(storeId);
@@ -395,7 +494,7 @@ export async function serverUpdateProduct(
   if (stockEdited) {
     const main = await getMainWarehouse(storeId);
     if (main) {
-      await upsertInventoryQty(main.id, input.id, input.stock as number);
+      await upsertInventoryQty(main.id, input.id, input.stock as number, await tenantIdForStore(storeId));
       await syncProductStock(storeId, input.id);
     }
     await logAudit(storeId, input.userId ?? null, {
@@ -405,6 +504,16 @@ export async function serverUpdateProduct(
       oldValue: { stock: toNumber(product.stock) },
       newValue: { stock: input.stock },
       metadata: { warehouse_id: main?.id ?? null },
+    }, { ip: input.ip ?? null });
+    await writeStockLedger({
+      tenantId: await tenantIdForStore(storeId),
+      warehouseId: main?.id ?? null,
+      productId: input.id,
+      movementType: "adjustment",
+      quantity: (input.stock as number) - toNumber(product.stock),
+      referenceType: "product",
+      referenceId: input.id,
+      idempotencyKey: `adjust-${input.id}-${Date.now()}`,
     });
   }
 
@@ -433,7 +542,7 @@ export async function serverUpdateProduct(
 
 export async function serverDeleteProduct(
   storeId: number,
-  input: { id: number; userId?: string | null }
+  input: { id: number; userId?: string | null; ip?: string | null }
 ): Promise<{ ok: true }> {
   await assertTenantWritable(storeId);
   const { data: product } = await supabase
@@ -456,7 +565,202 @@ export async function serverDeleteProduct(
     entityType: "product",
     entityId: input.id,
     oldValue: { name: String(product.name) },
+  }, { ip: input.ip ?? null });
+
+  return { ok: true };
+}
+
+// ---------------------------------------------------------------------------
+// Stock transfer requests (approval workflow: StockTransferRequest)
+// ---------------------------------------------------------------------------
+export async function serverCreateTransferRequest(
+  storeId: number,
+  input: {
+    productId: number;
+    fromWarehouseId: number;
+    toWarehouseId: number;
+    quantity: number;
+    note?: string | null;
+    userId?: string | null;
+    ip?: string | null;
+  }
+): Promise<{ id: number }> {
+  await assertTenantWritable(storeId);
+  const { productId, fromWarehouseId, toWarehouseId, quantity } = input;
+  if (fromWarehouseId === toWarehouseId) {
+    throw new Error("Source and destination warehouses must be different.");
+  }
+  if (!Number.isInteger(quantity) || quantity <= 0) {
+    throw new Error("Quantity must be a positive integer.");
+  }
+
+  const { data: warehouses } = await supabase
+    .from("warehouses")
+    .select("id, name")
+    .eq("store_id", storeId);
+  const ids = new Set((warehouses ?? []).map((w: any) => Number(w.id)));
+  if (!ids.has(fromWarehouseId) || !ids.has(toWarehouseId)) {
+    throw new Error("One or both warehouses do not belong to this store.");
+  }
+
+  const { data: product } = await supabase
+    .from("products")
+    .select("id, name")
+    .eq("id", productId)
+    .eq("store_id", storeId)
+    .maybeSingle();
+  if (!product) throw new Error("Unknown product.");
+
+  const { data: inserted, error } = await supabase
+    .from("stock_transfers")
+    .insert({
+      store_id: storeId,
+      tenant_id: await tenantIdForStore(storeId),
+      product_id: productId,
+      from_warehouse_id: fromWarehouseId,
+      to_warehouse_id: toWarehouseId,
+      quantity,
+      status: "pending",
+      note: input.note ?? null,
+      created_by_user_id: input.userId ?? null,
+    })
+    .select("id")
+    .single();
+  if (error) throw error;
+  const id = inserted && "id" in inserted ? Number(inserted.id) : 0;
+
+  await logAudit(storeId, input.userId ?? null, {
+    action: "transfer_requested",
+    entityType: "stock_transfer",
+    entityId: id,
+    newValue: {
+      product_id: productId,
+      product_name: product.name,
+      from_warehouse_id: fromWarehouseId,
+      to_warehouse_id: toWarehouseId,
+      quantity,
+    },
+    metadata: { note: input.note ?? null, status: "pending" },
+  }, { ip: input.ip ?? null });
+
+  return { id };
+}
+
+export async function serverApproveTransferRequest(
+  storeId: number,
+  transferId: number,
+  input: { userId?: string | null; ip?: string | null } = {}
+): Promise<{ ok: true }> {
+  await assertTenantWritable(storeId);
+  const { data: request } = await supabase
+    .from("stock_transfers")
+    .select("id, product_id, from_warehouse_id, to_warehouse_id, quantity, note, status")
+    .eq("id", transferId)
+    .eq("store_id", storeId)
+    .eq("status", "pending")
+    .maybeSingle();
+  if (!request) throw new Error("Pending transfer request not found.");
+
+  const productId = Number(request.product_id);
+  const fromWarehouseId = Number(request.from_warehouse_id);
+  const toWarehouseId = Number(request.to_warehouse_id);
+  const quantity = Number(request.quantity);
+
+  const { data: product } = await supabase
+    .from("products")
+    .select("id, name")
+    .eq("id", productId)
+    .eq("store_id", storeId)
+    .maybeSingle();
+  if (!product) throw new Error("Unknown product.");
+
+  const sourceBefore = await getWarehouseQty(fromWarehouseId, productId);
+  if (sourceBefore < quantity) {
+    throw new Error(
+      `Not enough stock for "${product.name}" in the source warehouse.`
+    );
+  }
+  const destBefore = await getWarehouseQty(toWarehouseId, productId);
+  const approveTenantId = await tenantIdForStore(storeId);
+  await upsertInventoryQty(fromWarehouseId, productId, sourceBefore - quantity, approveTenantId);
+  await upsertInventoryQty(toWarehouseId, productId, destBefore + quantity, approveTenantId);
+
+  const main = await getMainWarehouse(storeId);
+  if (main && (main.id === fromWarehouseId || main.id === toWarehouseId)) {
+    await syncProductStock(storeId, productId);
+  }
+
+  const { error: updateError } = await supabase
+    .from("stock_transfers")
+    .update({ status: "completed" })
+    .eq("id", transferId);
+  if (updateError) throw updateError;
+
+  const tenantId = await tenantIdForStore(storeId);
+  await writeStockLedger({
+    tenantId,
+    warehouseId: fromWarehouseId,
+    productId,
+    movementType: "transfer_out",
+    quantity: -quantity,
+    referenceType: "stock_transfer",
+    referenceId: transferId,
+    idempotencyKey: `transfer-${transferId}-out`,
   });
+  await writeStockLedger({
+    tenantId,
+    warehouseId: toWarehouseId,
+    productId,
+    movementType: "transfer_in",
+    quantity,
+    referenceType: "stock_transfer",
+    referenceId: transferId,
+    idempotencyKey: `transfer-${transferId}-in`,
+  });
+
+  await logAudit(storeId, input.userId ?? null, {
+    action: "transfer_approved",
+    entityType: "stock_transfer",
+    entityId: transferId,
+    oldValue: { status: "pending" },
+    newValue: { status: "completed" },
+    metadata: {
+      product_id: productId,
+      from: { warehouse_id: fromWarehouseId, quantity: sourceBefore },
+      to: { warehouse_id: toWarehouseId, quantity: destBefore },
+    },
+  }, { ip: input.ip ?? null });
+
+  return { ok: true };
+}
+
+export async function serverRejectTransferRequest(
+  storeId: number,
+  transferId: number,
+  input: { userId?: string | null; ip?: string | null } = {}
+): Promise<{ ok: true }> {
+  const { data: request } = await supabase
+    .from("stock_transfers")
+    .select("id, status")
+    .eq("id", transferId)
+    .eq("store_id", storeId)
+    .eq("status", "pending")
+    .maybeSingle();
+  if (!request) throw new Error("Pending transfer request not found.");
+
+  const { error } = await supabase
+    .from("stock_transfers")
+    .update({ status: "rejected" })
+    .eq("id", transferId);
+  if (error) throw error;
+
+  await logAudit(storeId, input.userId ?? null, {
+    action: "transfer_rejected",
+    entityType: "stock_transfer",
+    entityId: transferId,
+    oldValue: { status: "pending" },
+    newValue: { status: "rejected" },
+  }, { ip: input.ip ?? null });
 
   return { ok: true };
 }

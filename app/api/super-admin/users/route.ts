@@ -21,7 +21,7 @@ export async function GET(request: Request) {
 const schema = z.object({
   action: z.enum(["role", "ban", "unban", "assign-tenant", "reset-password"]),
   userId: z.string().uuid(),
-  role: z.enum(["owner", "manager", "warehouse_worker", "cashier"]).optional(),
+  role: z.enum(["owner", "super_admin", "manager", "warehouse_worker", "cashier", "accountant"]).optional(),
   tenantId: z.number().int().positive().optional(),
 }).superRefine((value, context) => {
   if (value.action === "role" && !value.role) context.addIssue({ code: "custom", message: "Role is required." });

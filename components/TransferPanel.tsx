@@ -36,6 +36,8 @@ export default function TransferPanel({
 
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
   const [transfers, setTransfers] = useState<StockTransfer[]>([]);
+  const [requests, setRequests] = useState<StockTransfer[]>([]);
+  const [requestBusy, setRequestBusy] = useState(false);
 
   const [productId, setProductId] = useState("");
   const [fromWarehouse, setFromWarehouse] = useState("");
@@ -80,6 +82,48 @@ export default function TransferPanel({
       .catch(() => setTransfersError(true));
   }, [storeId]);
 
+  const refreshRequests = useCallback(async () => {
+    try {
+      const response = await fetch(`/api/transfer/requests?storeId=${storeId}`, { cache: "no-store" });
+      if (response.ok) {
+        const body = await response.json();
+        setRequests(body.transfers ?? []);
+      }
+    } catch {
+      // requests panel stays empty on offline
+    }
+  }, [storeId]);
+
+  async function reviewRequest(requestId: number, action: "approve" | "reject") {
+    setRequestBusy(true);
+    setMessage(null);
+    try {
+      const response = await fetch("/api/transfer/requests", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ storeId, id: requestId, action }),
+      });
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        setMessage({ kind: "error", text: body.error ?? "Unable to review request." });
+        return;
+      }
+      setMessage({
+        kind: "success",
+        text: action === "approve" ? t("transferDone") : "Transfer request rejected.",
+      });
+      await Promise.all([refreshRequests(), refreshTransfers()]);
+      onChanged();
+    } catch (err) {
+      setMessage({
+        kind: "error",
+        text: err instanceof Error ? err.message : t("errorPrefix"),
+      });
+    } finally {
+      setRequestBusy(false);
+    }
+  }
+
   useEffect(() => {
     async function loadInitial() {
       setWarehouseError(false);
@@ -107,9 +151,10 @@ export default function TransferPanel({
         setTransfersError(true);
         setTransfers([]);
       }
+      refreshRequests();
     }
     loadInitial();
-  }, [refreshTransfers, storeId]);
+  }, [refreshRequests, refreshTransfers, storeId]);
 
   useEffect(() => {
     const goOnline = () => {
@@ -409,6 +454,66 @@ export default function TransferPanel({
           </ul>
         )}
       </div>
+
+      {requests.length > 0 && (
+        <div className="border-t border-gray-100 px-6 py-4">
+          <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-gray-500">
+            Transfer requests ({requests.filter((r) => r.status === "pending").length} pending)
+          </h3>
+          <ul className="divide-y divide-gray-100">
+            {requests.slice(0, 6).map((tr) => (
+              <li
+                key={tr.id}
+                className="flex flex-wrap items-center justify-between gap-2 py-2 text-sm"
+              >
+                <span className="min-w-0 truncate font-medium text-gray-900">
+                  {tr.product?.name ?? `#${tr.product_id}`}
+                </span>
+                <span className="flex items-center gap-2 text-gray-600">
+                  <span className="text-amber-700">
+                    {tr.from_warehouse?.name ?? "—"}
+                  </span>
+                  <svg className="h-3.5 w-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M5 12h14" />
+                    <path d="m12 5 7 7-7 7" />
+                  </svg>
+                  <span className="text-emerald-700">
+                    {tr.to_warehouse?.name ?? "—"}
+                  </span>
+                  <span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs font-semibold text-gray-700 tabular-nums">
+                    {tr.quantity}
+                  </span>
+                </span>
+                {tr.status === "pending" ? (
+                  <span className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      disabled={requestBusy}
+                      onClick={() => reviewRequest(tr.id, "approve")}
+                      className="inline-flex h-8 items-center rounded-lg bg-emerald-600 px-3 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-50"
+                    >
+                      Approve
+                    </button>
+                    <button
+                      type="button"
+                      disabled={requestBusy}
+                      onClick={() => reviewRequest(tr.id, "reject")}
+                      className="inline-flex h-8 items-center rounded-lg border border-red-200 bg-white px-3 text-xs font-semibold text-red-600 hover:bg-red-50 disabled:opacity-50"
+                    >
+                      Reject
+                    </button>
+                  </span>
+                ) : (
+                  <span className="rounded-full bg-red-50 px-2 py-0.5 text-xs font-semibold text-red-600">
+                    Rejected
+                  </span>
+                )}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       <ConfirmDialog
         open={transferConfirmation !== null}
         title="Confirm stock transfer"

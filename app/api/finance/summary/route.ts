@@ -1,7 +1,10 @@
 import { STORE_ID } from "@/lib/tenant";
-import { supabase } from "@/lib/supabase";
+import { getServerDataClient } from "@/lib/supabase-admin";
+import { requireFeature, tenantIdFromRequest } from "@/lib/plans";
 
 export const runtime = "nodejs";
+
+const supabase = getServerDataClient();
 
 function storeIdFrom(url: string): number {
   const raw = new URL(url).searchParams.get("storeId");
@@ -18,6 +21,8 @@ type InvoiceSummaryRow = { status: unknown; total: unknown; paid: unknown };
 type PaymentSummaryRow = { amount: unknown };
 
 export async function GET(req: Request) {
+  const locked = await requireFeature(tenantIdFromRequest(req), "analytics");
+  if (locked) return locked;
   const storeId = storeIdFrom(req.url);
   const [salesResult, invoicesResult, paymentsResult] = await Promise.all([
     supabase.from("sales").select("quantity, unit_price, unit_cost").eq("store_id", storeId),

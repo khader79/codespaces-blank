@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { getSupabaseAdmin } from "@/lib/supabase-admin";
 import { audit, requireSuperAdmin, unauthorized } from "@/lib/super-admin";
+import { setMaintenance } from "@/lib/maintenance";
 
 export const runtime = "nodejs";
 
@@ -27,6 +28,7 @@ export async function PATCH(request: Request) {
     const enabled = parsed.data.enabled ?? false;
     const { error } = await getSupabaseAdmin().from("platform_settings").upsert({ id: 1, maintenance_mode: enabled, updated_by: claims.user_id }, { onConflict: "id" });
     if (error) return Response.json({ error: error.message }, { status: 503 });
+    await setMaintenance(enabled);
     await audit(claims.user_id, enabled ? "platform.maintenance_enabled" : "platform.maintenance_disabled", "platform", "maintenance");
     return Response.json({ ok: true, maintenance: enabled });
   } catch (error) { return unauthorized(error); }

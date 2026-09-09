@@ -1,4 +1,5 @@
 import { STORE_ID } from "@/lib/tenant";
+import { getClientIp } from "@/lib/audit";
 import {
   serverCreateProduct,
   serverUpdateProduct,
@@ -45,7 +46,7 @@ export async function POST(req: Request) {
   }
 
   try {
-    const { id } = await serverCreateProduct(storeId, { name, price, stock });
+    const { id } = await serverCreateProduct(storeId, { name, price, stock, ip: getClientIp(req) });
     return Response.json({ id, store_id: storeId, name, price, stock });
   } catch (err) {
     return Response.json(
@@ -75,6 +76,7 @@ export async function PATCH(req: Request) {
       name: typeof body.name === "string" ? body.name : undefined,
       price: parseNum(body.price),
       stock: parseNum(body.stock),
+      ip: getClientIp(req),
     });
     return Response.json({ ok: true });
   } catch (err) {
@@ -100,7 +102,7 @@ export async function DELETE(req: Request) {
   }
 
   try {
-    await serverDeleteProduct(storeId, { id });
+    await serverDeleteProduct(storeId, { id, ip: getClientIp(req) });
     return Response.json({ ok: true });
   } catch (err) {
     return Response.json(

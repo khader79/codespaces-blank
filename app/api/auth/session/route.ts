@@ -9,6 +9,6 @@ export async function GET() {
     const claims = await verifySessionToken(token, "access");
     const operatorToken = cookies().get(OPERATOR_COOKIE)?.value;
     const operator = operatorToken ? await verifySessionToken(operatorToken, "operator").catch(() => null) : null;
-    return Response.json({ user: { id: claims.user_id, tenant_id: operator?.tenant_id ?? claims.tenant_id, warehouse_id: operator?.warehouse_id ?? claims.warehouse_id, assigned_warehouse_id: operator?.warehouse_id ?? claims.assigned_warehouse_id ?? claims.warehouse_id, role: operator?.role ?? claims.role, allowed_warehouses: operator?.allowed_warehouses ?? claims.allowed_warehouses, impersonating: Boolean(operator) } });
+    return Response.json({ user: { id: claims.user_id, tenant_id: operator?.tenant_id ?? claims.tenant_id, tenant_name: operator?.tenant_name ?? claims.tenant_name ?? null, warehouse_id: operator?.warehouse_id ?? claims.warehouse_id, assigned_warehouse_id: operator?.warehouse_id ?? claims.assigned_warehouse_id ?? claims.warehouse_id, role: operator?.role ?? claims.role, allowed_warehouses: operator?.allowed_warehouses ?? claims.allowed_warehouses, impersonating: Boolean(operator) } });
   } catch { return Response.json({ user: null }, { status: 401 }); }
 }

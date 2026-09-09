@@ -2,6 +2,7 @@ import { streamText, type CoreMessage } from "ai";
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import { buildStoreContext } from "@/lib/store-context";
 import { STORE_ID } from "@/lib/tenant";
+import { requireFeature, tenantIdFromRequest } from "@/lib/plans";
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
@@ -42,6 +43,9 @@ export async function POST(req: Request) {
       { status: 400 }
     );
   }
+
+  const locked = await requireFeature(tenantIdFromRequest(req), "ai");
+  if (locked) return locked;
 
   const storeId =
     (typeof body.storeId === "number" && body.storeId) ||

@@ -1,4 +1,3 @@
-import { supabase } from "@/lib/supabase";
 import { STORE_ID } from "@/lib/tenant";
 
 const INITIAL_PAGE_SIZE = 20;
@@ -46,6 +45,14 @@ export interface StockTransfer {
   to_warehouse?: { name: string };
 }
 
+interface Catalog {
+  products: Product[];
+  warehouses: Warehouse[];
+  sales: Sale[];
+  transfers: StockTransfer[];
+  inventory: Array<{ warehouse_id: number; product_id: number; quantity: number }>;
+}
+
 async function readError(res: Response): Promise<Error> {
   let message = `Request failed (${res.status}).`;
   try {
@@ -57,46 +64,51 @@ async function readError(res: Response): Promise<Error> {
   return new Error(message);
 }
 
-export async function getProducts(storeId = STORE_ID): Promise<Product[]> {
-  const { data, error } = await supabase
-    .from("products")
-    .select("id, name, price, stock, store_id, created_at")
-    .eq("store_id", storeId)
-    .order("id", { ascending: true })
-    .limit(INITIAL_PAGE_SIZE);
+let catalogPromise: Promise<Catalog> | null = null;
 
-  if (error) throw error;
-  return (data as Array<Omit<Product, "warehouse_id">> | null ?? []).map((product) => ({ ...product, warehouse_id: null }));
+async function fetchCatalog(): Promise<Catalog> {
+  const res = await fetch("/api/catalog", { cache: "no-store" });
+  if (!res.ok) throw await readError(res);
+  const body = (await res.json()) as Catalog;
+  return {
+    products: body.products ?? [],
+    warehouses: body.warehouses ?? [],
+    sales: body.sales ?? [],
+    transfers: body.transfers ?? [],
+    inventory: body.inventory ?? [],
+  };
+}
+
+function getCatalog(): Promise<Catalog> {
+  if (!catalogPromise) {
+    catalogPromise = fetchCatalog().finally(() => {
+      catalogPromise = null;
+    });
+  }
+  return catalogPromise;
+}
+
+export async function getProducts(storeId = STORE_ID): Promise<Product[]> {
+  const catalog = await getCatalog();
+  const rows = catalog.products.filter((p) => Number(p.store_id ?? storeId) === storeId);
+  return rows.map((product) => ({ ...product, warehouse_id: null }));
 }
 
 export async function getWarehouses(storeId = STORE_ID): Promise<Warehouse[]> {
-  const { data, error } = await supabase
-    .from("warehouses")
-    .select("id, store_id, name, is_main")
-    .eq("store_id", storeId)
-    .order("is_main", { ascending: false })
-    .order("id", { ascending: true })
-    .limit(INITIAL_PAGE_SIZE);
-
-  if (error) throw error;
-  return (data as Array<Omit<Warehouse, "location">> | null ?? []).map((warehouse) => ({ ...warehouse, location: null }));
+  const catalog = await getCatalog();
+  return catalog.warehouses
+    .filter((w) => Number(w.store_id) === storeId)
+    .sort((a, b) => (b.is_main ? 1 : 0) - (a.is_main ? 1 : 0));
 }
 
 export async function getWarehouseInventory(
   warehouseId: number
 ): Promise<Map<number, number>> {
-  const { data, error } = await supabase
-    .from("inventory")
-    .select("product_id, quantity")
-    .eq("warehouse_id", warehouseId)
-    .limit(INITIAL_PAGE_SIZE);
-
-  if (error) throw error;
+  const catalog = await getCatalog();
   return new Map(
-    (data ?? []).map((row: { product_id: unknown; quantity: unknown }) => [
-      Number(row.product_id),
-      Number(row.quantity),
-    ])
+    catalog.inventory
+      .filter((row) => Number(row.warehouse_id) === warehouseId)
+      .map((row) => [Number(row.product_id), Number(row.quantity)])
   );
 }
 
@@ -104,17 +116,10 @@ export async function getRecentTransfers(
   storeId = STORE_ID,
   limit = 10
 ): Promise<StockTransfer[]> {
-  const { data, error } = await supabase
-    .from("stock_transfers")
-    .select(
-      "*, product:products(name), from_warehouse:warehouses!stock_transfers_from_warehouse_id_fkey(name), to_warehouse:warehouses!stock_transfers_to_warehouse_id_fkey(name)"
-    )
-    .eq("store_id", storeId)
-    .order("created_at", { ascending: false })
-    .limit(limit);
-
-  if (error) throw error;
-  return data ?? [];
+  const catalog = await getCatalog();
+  return catalog.transfers
+    .filter((t) => Number(t.store_id) === storeId)
+    .slice(0, limit);
 }
 
 export async function insertProduct(
@@ -153,19 +158,8 @@ export async function updateProductStock(
 }
 
 export async function getSales(storeId = STORE_ID): Promise<Sale[]> {
-  const { data, error } = await supabase
-    .from("sales")
-    .select("id, store_id, product_id, sold_at, quantity, total_price")
-    .eq("store_id", storeId)
-    .order("sold_at", { ascending: true })
-    .limit(INITIAL_PAGE_SIZE);
-
-  if (error) throw error;
-  return (data as Array<{ id: number; store_id: number; product_id: number | null; sold_at: string; quantity: number; total_price: number }> | null ?? []).map((sale) => ({
-    ...sale,
-    unit_price: Number(sale.quantity) ? Number(sale.total_price) / Number(sale.quantity) : 0,
-    unit_cost: 0,
-  }));
+  const catalog = await getCatalog();
+  return catalog.sales.filter((s) => Number(s.store_id) === storeId);
 }
 
 export async function recordSale(

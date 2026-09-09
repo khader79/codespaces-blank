@@ -4,6 +4,7 @@ import { Suspense } from "react";
 import "./globals.css";
 import Providers from "@/components/providers";
 import TenantAccessBanner from "@/components/TenantAccessBanner";
+import ImpersonationBanner from "@/components/ImpersonationBanner";
 import AppFrame from "@/components/AppFrame";
 
 const inter = Inter({ subsets: ["latin"] });
@@ -21,7 +22,7 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body className={inter.className} suppressHydrationWarning>
-        <Providers><TenantAccessBanner /><AppFrame><Suspense fallback={<RouteLoading />}>{children}</Suspense></AppFrame></Providers>
+        <Providers><TenantAccessBanner /><ImpersonationBanner /><AppFrame><Suspense fallback={<RouteLoading />}>{children}</Suspense></AppFrame></Providers>
       </body>
     </html>
   );

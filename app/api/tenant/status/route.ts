@@ -1,5 +1,7 @@
 import { STORE_ID } from "@/lib/tenant";
-import { supabase } from "@/lib/supabase";
+import { getServerDataClient } from "@/lib/supabase-admin";
+
+const supabase = getServerDataClient();
 
 export const runtime = "nodejs";
 

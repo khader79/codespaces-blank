@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState, type FormEvent } from "react";
-import { Plus } from "lucide-react";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { Plus, Radio } from "lucide-react";
 import {
   deleteProduct,
   getProducts,
@@ -23,6 +23,7 @@ import TransferPanel from "@/components/TransferPanel";
 import ConfirmDialog from "@/components/ConfirmDialog";
 import LoginForm from "@/components/LoginForm";
 import { useAuth } from "@/components/AuthProvider";
+import { useInventoryRealtime, type RealtimeState } from "@/lib/realtime";
 import { cacheProducts, getCachedProducts } from "@/lib/db-offline";
 
 const LOW_STOCK_THRESHOLD = 5;
@@ -48,6 +49,24 @@ function Dashboard() {
 
   const [copilotOpen, setCopilotOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<Product | null>(null);
+
+  const [realtimeState, setRealtimeState] = useState<RealtimeState>("idle");
+  const refreshTimer = useRef<number | null>(null);
+
+  function scheduleRefresh() {
+    if (refreshTimer.current !== null) return;
+    refreshTimer.current = window.setTimeout(() => {
+      refreshTimer.current = null;
+      refreshProducts();
+    }, 250);
+  }
+
+  useInventoryRealtime({
+    tenantId: storeId,
+    onInventoryEvent: scheduleRefresh,
+    onTransferEvent: scheduleRefresh,
+    onStateChange: setRealtimeState,
+  });
 
   useEffect(() => {
     getCachedProducts(storeId, null).then((cached) => {
@@ -152,11 +171,25 @@ function Dashboard() {
       <AppHeader />
 
       <div className="mx-auto max-w-6xl px-6 py-10">
-        <header className="mb-8">
-          <h1 className="text-3xl font-bold tracking-tight text-gray-900">
-            {t("appName")}
-          </h1>
-          <p className="mt-1 text-sm text-gray-500">{t("dashboardTagline")}</p>
+        <header className="mb-8 flex items-end justify-between">
+          <div>
+            <h1 className="text-3xl font-bold tracking-tight text-gray-900">
+              {t("appName")}
+            </h1>
+            <p className="mt-1 text-sm text-gray-500">{t("dashboardTagline")}</p>
+          </div>
+          {realtimeState !== "idle" && (
+            <span
+              className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold ${
+                realtimeState === "live"
+                  ? "bg-emerald-100 text-emerald-700"
+                  : "bg-amber-100 text-amber-700"
+              }`}
+            >
+              <Radio className="h-3.5 w-3.5" />
+              {realtimeState === "live" ? "Live" : "Syncing"}
+            </span>
+          )}
         </header>
 
         {error && (
